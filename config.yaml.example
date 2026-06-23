@@ -1,0 +1,112 @@
+# bean-sync source configuration
+# Copy this file to config.yaml and edit it for your accounts.
+# Run `bean-sync init` to generate a starter config.yaml in a new directory.
+#
+# Source types: !InboxSource, !EmailSource, !ImageSource, !CUASource, !StagehandSource
+#
+# enrichment: true  — parsed .bean files are used as LLM context for other sources
+#                     but are NOT included in main.bean (not part of your ledger).
+#                     Use for inbox receipt scanning where the bank alert is authoritative.
+# enrichment: false — (default) parsed .bean files ARE included in main.bean.
+#                     Use for any source that is the authoritative record of a transaction.
+#
+# nullable: true  — (default) the LLM may return null for files that contain no transaction
+#                   (e.g. marketing emails, payment confirmations).
+# nullable: false — the LLM is retried if it returns null; raises an error if it persists.
+#                   Use for authoritative sources where every file must produce a transaction.
+#
+# bean-sync manages sources/_primary.bean automatically — do not edit it by hand.
+
+!Config
+sources:
+
+  # Scan the whole inbox for receipts/invoices — enrichment context for bank transactions.
+  # enrichment: true means these .bean files are NOT added to main.bean directly;
+  # they are matched to authoritative bank/card transactions by date and amount.
+  - !InboxSource
+    name: inbox
+    plugin: email-receipt
+    source_dir: sources/inbox
+    nullable: true
+    enrichment: true
+    imap_host: imap.gmail.com
+    imap_user: you@gmail.com
+    imap_password: !secret gmail_app_password
+    hint: |-
+      Generic email receipts and invoices from any sender. These are enrichment context —
+      they will be attached to authoritative bank/card transactions to help identify payee
+      and narration. Always make your best guess; do not call ask_user.
+      If the amount is missing or unclear, still produce a transaction with amount 0.00 CAD
+      so the payee and narration context is preserved.
+      Return null only for things that are definitely not a purchase or charge: newsletters,
+      marketing, bank statements, verification codes, or shipping updates with no charge.
+
+  # A credit card that sends per-transaction email alerts.
+  # Duplicate this block for each card/account you want to track.
+  - !EmailSource
+    name: mycard
+    plugin: email
+    source_dir: sources/mycard
+    nullable: true
+    enrichment: false
+    imap_host: imap.gmail.com
+    imap_user: you@gmail.com
+    imap_password: !secret gmail_app_password
+    sender: alerts@mybank.com
+    # sender can also be a list for multiple addresses:
+    # sender:
+    #   - alerts@mybank.com
+    #   - noreply@mybank.com
+    hint: |-
+      MyBank Visa credit card purchase alerts (alerts@mybank.com).
+      Purchases: positive amount on the appropriate Expenses account,
+      negative on Liabilities:CreditCard:MyCard.
+      Return null if the email is a payment confirmation or contains no purchase.
+
+  # Drop receipt photos (JPG/PNG/WEBP) into sources/receipts/ for automatic parsing.
+  - !ImageSource
+    name: receipts
+    plugin: image
+    source_dir: sources/receipts
+    nullable: true
+    enrichment: false
+    hint: |-
+      Photos of paper or digital receipts. Use the payment method visible on the receipt
+      to pick the liability or asset account; if unclear, default to Assets:Checking.
+      Use the grand total (after tax) as the transaction amount.
+
+  # Browser-automated account scraping.
+  # account_name must match the label shown in online banking.
+  # days: how many days back to fetch (subsequent runs use saved state).
+  - !CUASource
+    name: cua
+    plugin: cua
+    source_dir: sources/cua
+    nullable: false
+    enrichment: false
+    account_name: MY CHEQUING
+    days: 30
+    cua_user: !secret cua_username
+    cua_password: !secret cua_password
+    hint: |-
+      CUA chequing account transactions. Deposits: positive on Assets:Checking:CUA,
+      negative on the appropriate Income account. Withdrawals: negative on
+      Assets:Checking:CUA, positive on the appropriate Expenses account.
+      Return null only if the entry contains no dollar amount or is clearly non-transactional.
+
+  # Advanced: custom Stagehand browser-automation script.
+  # script: path to a .ts Stagehand script that logs in and exports transactions.
+  # secrets: environment variables injected into the script (KEY=secret_name, one per line).
+  # - !StagehandSource
+  #   name: mybank
+  #   plugin: stagehand
+  #   source_dir: sources/mybank
+  #   nullable: false
+  #   enrichment: false
+  #   script: scripts/mybank.ts
+  #   secrets: |
+  #     MYBANK_USER=mybank_username
+  #     MYBANK_PASS=mybank_password
+  #   hint: |-
+  #     MyBank chequing account. Deposits positive on Assets:Checking:MyBank,
+  #     withdrawals positive on the appropriate Expenses account.

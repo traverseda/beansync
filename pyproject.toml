@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "beancountio"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "litellm",
+    "loguru",
+    "nicegui",
+    "pydantic",
+    "pyyaml",
+    "questionary",
+    "plotly",
+    "requests",
+    "typer",
+    "nh3>=0.3.5",
+]
+
+[project.scripts]
+bean-sync = "beancountio.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["beancountio*"]

@@ -1,0 +1,79 @@
+
+* Options
+
+option "title" "My Personal Finance"
+option "operating_currency" "USD"
+option "inferred_tolerance_default" "*:0.001"
+
+plugin "beancount.plugins.auto_accounts"
+
+* Accounts
+
+; Edit this section to match your actual accounts and spending categories.
+; bean-sync reads everything under "* Accounts" to guide LLM transaction categorisation.
+; You can add sub-accounts freely (e.g. Expenses:Food:Groceries) — the LLM will use them.
+; Account comments are also included as context, so add notes about what each account covers.
+
+; --- Assets ---
+
+1970-01-01 open Assets:Cash
+1970-01-01 open Assets:Checking        ; Main chequing/checking account
+1970-01-01 open Assets:Savings
+
+; --- Income ---
+
+1970-01-01 open Income:Paycheck
+1970-01-01 open Income:Bonus
+1970-01-01 open Income:InterestIncome
+1970-01-01 open Income:Reimbursement
+
+; --- Expenses ---
+
+; Gas, parking, transit, rideshare, vehicle maintenance
+1970-01-01 open Expenses:AutoAndTransport
+
+; Phone, internet, electricity, water, recurring subscriptions
+1970-01-01 open Expenses:BillsAndUtilities
+
+; Consumer electronics, gadgets, cables, peripherals
+1970-01-01 open Expenses:Electronics
+
+; Gaming, streaming (Netflix, Spotify), cinemas, concerts
+1970-01-01 open Expenses:Entertainment
+
+; Bank fees, wire fees, currency conversion fees
+1970-01-01 open Expenses:FeesAndCharges
+
+; Restaurants, cafes, takeout, groceries, alcohol
+1970-01-01 open Expenses:Food
+1970-01-01 open Expenses:Food:Groceries
+1970-01-01 open Expenses:Food:Restaurants
+
+; Gym, sports, medical, dental, pharmacy
+1970-01-01 open Expenses:HealthAndFitness
+
+; Rent, mortgage, property tax, home maintenance, furniture
+1970-01-01 open Expenses:Housing
+
+; Anything that doesn't fit elsewhere
+1970-01-01 open Expenses:Misc
+
+; Retail purchases, clothing, online shopping
+1970-01-01 open Expenses:Shopping
+
+; Flights, hotels, Airbnb, car rental
+1970-01-01 open Expenses:Travel
+
+; --- Liabilities ---
+
+; Add one entry per credit card. The LLM uses these account names.
+1970-01-01 open Liabilities:CreditCard:MyCard    ; **** **** **** 1234
+
+* Data
+
+1970-01-01 open Equity:Initial
+
+; bean-sync manages this file — run: bean-sync ingest  to regenerate after config changes.
+; Only primary sources (enrichment: false) are included here.
+; Do not edit sources/_primary.bean by hand.
+include "sources/_primary.bean"
