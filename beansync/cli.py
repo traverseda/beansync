@@ -5,7 +5,7 @@ from pathlib import Path
 import typer
 from loguru import logger  # type: ignore[import-not-found]
 
-from beancountio.config import AnySource, CUASource, EmailSource, InboxSource, load_accounts, load_sources, write_primary_includes
+from beansync.config import AnySource, CUASource, EmailSource, InboxSource, load_accounts, load_sources, write_primary_includes
 
 app = typer.Typer(help="bean-sync: LLM-assisted beancount transaction ingestion")
 secrets_app = typer.Typer(help="Manage named secrets stored in the system keyring.")
@@ -146,7 +146,7 @@ def ingest(
 ) -> None:
     """Fetch new data and parse it for each source."""
     import datetime as dt
-    from beancountio import llm, sync_email, sync_cua
+    from beansync import llm, sync_email, sync_cua
 
     since_date: dt.date | None = None
     if since:
@@ -214,7 +214,7 @@ def parse(
 
     Useful after deleting sidecars to re-run the LLM with an updated model or prompt.
     """
-    from beancountio import llm
+    from beansync import llm
 
     all_sources = load_sources()
     selected = _filter(all_sources, names)
@@ -241,7 +241,7 @@ def serve(
     reload: bool = typer.Option(False, "--reload/--no-reload", help="Auto-reload on file changes"),
 ) -> None:
     """Launch the web UI."""
-    from beancountio.ui.app import run
+    from beansync.ui.app import run
     run(host=host, port=port, reload=reload)
 
 
@@ -300,7 +300,7 @@ def init(
 @secrets_app.command("list")
 def secrets_list() -> None:
     """List all registered secret names."""
-    from beancountio.secrets import list_secrets
+    from beansync.secrets import list_secrets
     known = list_secrets()
     if not known:
         print("No secrets registered. Use 'bean-sync secrets set <name>' to add one.")
@@ -318,7 +318,7 @@ def secrets_set(
 ) -> None:
     """Store a secret value in the system keyring."""
     import getpass
-    from beancountio.secrets import set_secret
+    from beansync.secrets import set_secret
     if not value:
         value = getpass.getpass(f"Value for '{name}': ")
     if not value:
@@ -334,7 +334,7 @@ def secrets_delete(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
 ) -> None:
     """Delete a secret from the keyring and secrets.yaml."""
-    from beancountio.secrets import delete_secret, list_secrets
+    from beansync.secrets import delete_secret, list_secrets
     if name not in list_secrets():
         logger.error("Secret '{}' not found.", name)
         raise typer.Exit(1)

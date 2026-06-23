@@ -29,7 +29,7 @@
 
         beanSync = pkgs.writeShellScriptBin "bean-sync" ''
           export PYTHONPATH="''${PYTHONPATH:+$PYTHONPATH:}$(pwd)"
-          exec ${pythonEnv}/bin/python -m beancountio "$@"
+          exec ${pythonEnv}/bin/python -m beansync "$@"
         '';
       in {
         devShells.default = pkgs.mkShell {

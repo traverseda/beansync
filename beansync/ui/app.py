@@ -5,8 +5,8 @@ from pathlib import Path
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from nicegui import app as nicegui_app, ui
 
-from beancountio.ui.pages import dashboard, ingest, notes
-from beancountio.ui.pages import config_editor
+from beansync.ui.pages import dashboard, ingest, notes
+from beansync.ui.pages import config_editor
 
 
 def _sources_root() -> Path:
@@ -32,8 +32,8 @@ async def serve_source(path: str) -> FileResponse | PlainTextResponse:
 
 @nicegui_app.get("/api/print-packet", response_model=None)
 async def print_packet(path: str) -> HTMLResponse | PlainTextResponse:
-    from beancountio.llm import find_enrichment, html_to_text
-    from beancountio.config import load_sources
+    from beansync.llm import find_enrichment, html_to_text
+    from beansync.config import load_sources
     import re
 
     source_path = _check_source_path(path)

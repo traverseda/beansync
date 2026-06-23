@@ -15,8 +15,8 @@ from litellm import completion  # type: ignore[import-not-found]
 from loguru import logger  # type: ignore[import-not-found]
 from pydantic import BaseModel, ValidationError  # type: ignore[import-not-found]
 
-from beancountio.config import LEDGER, MAX_RETRIES, MAX_SEARCHES, MAX_TOOL_ROUNDS, MODEL, VISION_MODEL, AnySource
-from beancountio.notes import delete_note, get_notes_context, match_notes, save_note
+from beansync.config import LEDGER, MAX_RETRIES, MAX_SEARCHES, MAX_TOOL_ROUNDS, MODEL, VISION_MODEL, AnySource
+from beansync.notes import delete_note, get_notes_context, match_notes, save_note
 
 litellm.suppress_debug_info = True
 

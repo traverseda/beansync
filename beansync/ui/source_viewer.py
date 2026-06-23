@@ -6,8 +6,8 @@ from urllib.parse import quote
 
 from nicegui import ui
 
-from beancountio.config import load_sources
-from beancountio.llm import find_enrichment, html_to_text
+from beansync.config import load_sources
+from beansync.llm import find_enrichment, html_to_text
 
 
 def _display_source(path: Path) -> None:

@@ -10,7 +10,7 @@ import threading
 from nicegui import ui
 from nicegui.events import XtermDataEventArguments, XtermResizeEventArguments
 
-from beancountio.config import load_sources
+from beansync.config import load_sources
 
 
 def page() -> None:

@@ -11,8 +11,8 @@ from nicegui import ui
 
 from urllib.parse import quote
 
-from beancountio.config import LEDGER, load_sources
-from beancountio.ui.transaction_editor import new_transaction_dialog, transaction_editor_dialog
+from beansync.config import LEDGER, load_sources
+from beansync.ui.transaction_editor import new_transaction_dialog, transaction_editor_dialog
 
 
 _PERIODS = {

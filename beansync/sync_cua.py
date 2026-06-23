@@ -7,7 +7,7 @@ from pathlib import Path
 
 from loguru import logger  # type: ignore[import-not-found]
 
-from beancountio.config import CUASource, SecretRef
+from beansync.config import CUASource, SecretRef
 
 CUA_BASE = "https://online.cua.com"
 SECURED_BASE = "https://secured.cua.com"

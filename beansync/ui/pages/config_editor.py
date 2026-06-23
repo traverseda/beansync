@@ -7,11 +7,11 @@ from typing import Union, get_args as _ga, get_origin as _go, get_type_hints as 
 import yaml  # type: ignore[import-not-found]
 from nicegui import ui  # type: ignore[import-not-found]
 
-from beancountio.config import (
+from beansync.config import (
     AnySource, Config, SecretRef, _Dumper, _Loader, _PLUGIN_REGISTRY,
     _source_from_dict, load_config, save_config, write_primary_includes,
 )
-from beancountio import secrets as _secrets
+from beansync import secrets as _secrets
 
 
 # Fields rendered the same way for every source type.

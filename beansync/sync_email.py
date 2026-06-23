@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml  # type: ignore[import-not-found]
 from loguru import logger  # type: ignore[import-not-found]
 
-from beancountio.config import AnySource, EmailSource
+from beansync.config import AnySource, EmailSource
 
 DEFAULT_IMAP_HOST = "imap.gmail.com"
 STATE_FILE = Path("sources/state/downloads.yaml")
@@ -170,7 +170,7 @@ def fetch(source: EmailSource, since: datetime.date | None = None) -> int:
 
     source.source_dir.mkdir(parents=True, exist_ok=True)
 
-    from beancountio.config import SecretRef
+    from beansync.config import SecretRef
     password = source.imap_password.resolve() if isinstance(source.imap_password, SecretRef) else source.imap_password
     imap = _connect(source.imap_host, source.imap_user, password)
     logger.info("Connecting as {} — fetching {} sender(s) since {}", source.imap_user, len(senders), since)
@@ -220,7 +220,7 @@ def ingest_receipt(source: AnySource, system_prompt: str, all_source_dirs: list[
     Tracks non-receipt UIDs in the state file to avoid re-processing.
     Returns number of receipts found.
     """
-    from beancountio.llm import html_to_text, parse_text
+    from beansync.llm import html_to_text, parse_text
 
     enrichment_dirs = [d for d in all_source_dirs if d != source.source_dir]
     state = load_state()
@@ -232,7 +232,7 @@ def ingest_receipt(source: AnySource, system_prompt: str, all_source_dirs: list[
 
     source.source_dir.mkdir(parents=True, exist_ok=True)
 
-    from beancountio.config import SecretRef
+    from beansync.config import SecretRef
     imap_host = getattr(source, "imap_host", DEFAULT_IMAP_HOST)
     imap_user = getattr(source, "imap_user", "")
     raw_pw = getattr(source, "imap_password", "")

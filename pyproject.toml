@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "beancountio"
+name = "beansync"
 version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
@@ -20,8 +20,8 @@ dependencies = [
 ]
 
 [project.scripts]
-bean-sync = "beancountio.cli:app"
+bean-sync = "beansync.cli:app"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["beancountio*"]
+include = ["beansync*"]

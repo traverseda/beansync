@@ -5,7 +5,7 @@ from pathlib import Path
 
 from loguru import logger  # type: ignore[import-not-found]
 
-from beancountio.config import SecretRef, StagehandSource
+from beansync.config import SecretRef, StagehandSource
 
 
 def _resolve(val: str | SecretRef) -> str:

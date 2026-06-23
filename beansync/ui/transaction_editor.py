@@ -5,13 +5,13 @@ from pathlib import Path
 
 from nicegui import ui
 
-from beancountio.llm import Posting, Transaction, transaction_to_beancount
+from beansync.llm import Posting, Transaction, transaction_to_beancount
 
 
 def _ledger_accounts() -> list[str]:
     from beancount import loader
     from beancount.core import data as bdata
-    from beancountio.config import LEDGER
+    from beansync.config import LEDGER
 
     entries, _errors, _options = loader.load_file(str(LEDGER))
     accounts = sorted({
@@ -23,7 +23,7 @@ def _ledger_accounts() -> list[str]:
 def _ledger_payees() -> list[str]:
     from beancount import loader
     from beancount.core import data as bdata
-    from beancountio.config import LEDGER
+    from beansync.config import LEDGER
 
     entries, _errors, _options = loader.load_file(str(LEDGER))
     payees = sorted({
@@ -229,7 +229,7 @@ def new_transaction_dialog(on_save: Callable | None = None) -> None:
     """Open a dialog to create a new transaction and append it to general.bean."""
     import datetime
 
-    from beancountio.config import LEDGER
+    from beansync.config import LEDGER
 
     general_bean = LEDGER.parent / "general.bean"
     accounts = _ledger_accounts()

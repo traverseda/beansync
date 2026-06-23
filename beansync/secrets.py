@@ -15,7 +15,7 @@ except ImportError:
 
 SECRETS_FILE = Path("secrets.yaml")
 KEYRING_SERVICE = "bean-sync"
-_OLD_KEYRING_SERVICE = "beancountio-email"
+_OLD_KEYRING_SERVICE = "beansync-email"
 
 
 def list_secrets() -> dict[str, str]:
@@ -104,7 +104,7 @@ def delete_secret(name: str) -> None:
 
 
 def migrate_old_credentials() -> dict[str, str]:
-    """Move old 'beancountio-email' keyring entries to named bean-sync secrets.
+    """Move old 'beansync-email' keyring entries to named bean-sync secrets.
 
     Returns {username: secret_name} for each credential migrated.
     """

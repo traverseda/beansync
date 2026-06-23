@@ -15,7 +15,7 @@ class SecretRef:
     name: str
 
     def resolve(self) -> str:
-        from beancountio.secrets import get_secret
+        from beansync.secrets import get_secret
         return get_secret(self.name)
 
 
@@ -129,7 +129,7 @@ class EmailSource:
     parse_mode: ClassVar[str] = "standard"
 
     def fetch(self, headed: bool = False, since=None) -> None:
-        from beancountio.sync_email import fetch as _fetch
+        from beansync.sync_email import fetch as _fetch
         _fetch(self, since=since)
 
 
@@ -169,7 +169,7 @@ class CUASource:
     parse_mode: ClassVar[str] = "standard"
 
     def fetch(self, headed: bool = False, since=None) -> None:
-        from beancountio.sync_cua import fetch_batch
+        from beansync.sync_cua import fetch_batch
         fetch_batch([self], headed=headed, since=since)
 
 
@@ -207,7 +207,7 @@ class StagehandSource:
     parse_mode: ClassVar[str] = "standard"
 
     def fetch(self, headed: bool = False, since=None) -> None:
-        from beancountio.sync_stagehand import fetch as _fetch
+        from beansync.sync_stagehand import fetch as _fetch
         _fetch(self, headed=headed, since=since)
 
 
