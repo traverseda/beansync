@@ -23,7 +23,34 @@ class _HAIngressMiddleware:
         await self.app(scope, receive, send)
 
 
+class _NiceGUIStaticCORSMiddleware:
+    """Add CORS headers to NiceGUI static assets so HA's service worker can proxy
+    ES module fetches without getting opaque responses that fail module loading."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or not scope.get("path", "").startswith("/_nicegui/"):
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_cors(message: dict) -> None:
+            if message["type"] == "http.response.start":
+                headers = list(message.get("headers", []))
+                headers.extend([
+                    (b"access-control-allow-origin", b"*"),
+                    (b"cross-origin-resource-policy", b"cross-origin"),
+                    (b"cache-control", b"no-store"),
+                ])
+                message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_cors)
+
+
 nicegui_app.add_middleware(_HAIngressMiddleware)
+nicegui_app.add_middleware(_NiceGUIStaticCORSMiddleware)
 
 from beansync.ui.pages import dashboard, ingest, notes
 from beansync.ui.pages import config_editor
