@@ -254,4 +254,5 @@ def config_page() -> None:
 
 
 def run(host: str = "127.0.0.1", port: int = 8765, reload: bool = False) -> None:
-    ui.run(host=host, port=port, reload=reload, title="bean-sync", dark=None, show=False, favicon="🫘")
+    ui.run(host=host, port=port, reload=reload, title="bean-sync", dark=None, show=False, favicon="🫘",
+           gzip_middleware_factory=None)
