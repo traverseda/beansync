@@ -23,15 +23,15 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 
 # Install uv (fast Python package manager)
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:$PATH"
+ENV PATH="/root/.local/bin:/opt/venv/bin:$PATH"
 
 # tsx for running stagehand scripts via npx
 RUN npm install -g tsx
 
-# Install beansync from the repo
+# Install beansync into a venv (avoids Debian's externally-managed-environment restriction)
 WORKDIR /app
 COPY . .
-RUN uv pip install --system --no-cache .
+RUN uv venv /opt/venv && uv pip install --no-cache --python /opt/venv/bin/python .
 
 COPY addon/run.sh /run.sh
 RUN chmod +x /run.sh
