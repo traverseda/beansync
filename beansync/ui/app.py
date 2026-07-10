@@ -7,6 +7,7 @@ from nicegui import app as nicegui_app, ui
 
 from beansync.ui.pages import dashboard, ingest, notes
 from beansync.ui.pages import config_editor
+from beansync.ui.pages import chat as chat_module
 
 
 def _sources_root() -> Path:
@@ -142,51 +143,68 @@ async def print_packet(path: str) -> HTMLResponse | PlainTextResponse:
     return HTMLResponse(html_doc)
 
 
-def _nav_drawer() -> None:
-    with ui.left_drawer(value=True).classes("bg-gray-900 text-white"):
-        ui.label("bean-sync").classes("text-xl font-bold px-4 pt-4 pb-2 text-green-400")
-        with ui.column().classes("gap-1 px-2"):
-            ui.button("Dashboard", on_click=lambda: ui.navigate.to("/")).props(
-                "flat align=left"
-            ).classes("w-full text-white hover:bg-gray-700")
-            ui.button("Ingest", on_click=lambda: ui.navigate.to("/ingest")).props(
-                "flat align=left"
-            ).classes("w-full text-white hover:bg-gray-700")
-            ui.button("Notes", on_click=lambda: ui.navigate.to("/notes")).props(
-                "flat align=left"
-            ).classes("w-full text-white hover:bg-gray-700")
-            ui.button("Config", on_click=lambda: ui.navigate.to("/config")).props(
-                "flat align=left"
-            ).classes("w-full text-white hover:bg-gray-700")
+def _nav_header() -> None:
+    with ui.header().classes("bg-gray-900 items-center gap-1 px-4"):
+        ui.label("bean-sync").classes("text-lg font-bold text-green-400 mr-2")
+        for _label, _path in [
+            ("Dashboard", "/"),
+            ("Ingest", "/ingest"),
+            ("Notes", "/notes"),
+            ("Config", "/config"),
+        ]:
+            ui.button(_label, on_click=lambda p=_path: ui.navigate.to(p)).props(
+                "flat"
+            ).classes("text-white hover:bg-gray-700")
+        ui.button(icon="chat", on_click=lambda: chat_div.set_visibility(not chat_div.visible)).props(
+            "flat dense"
+        ).classes("text-white ml-auto").tooltip("Finance Assistant")
+
+    chat_div = (
+        ui.element("div")
+        .style(
+            "position: fixed; top: 0; left: 0; right: 0; height: 480px;"
+            " background: #1f2937; z-index: 3000; overflow: hidden;"
+            " display: flex; flex-direction: column; padding: 16px; gap: 8px;"
+            " box-shadow: 0 4px 24px rgba(0,0,0,0.5);"
+        )
+    )
+    chat_div.set_visibility(False)
+    with chat_div:
+        chat_module.chat_panel(
+            set_date_from=lambda v: None,
+            set_date_to=lambda v: None,
+            set_accounts=lambda v: None,
+            refresh_all=lambda: None,
+            close=lambda: chat_div.set_visibility(False),
+        )
 
 
 @ui.page("/")
 def index() -> None:
-    _nav_drawer()
-    with ui.column().classes("p-6 w-full"):
-        dashboard.page()
+    _nav_header()
+    dashboard.page()
 
 
 @ui.page("/ingest")
 def ingest_page() -> None:
-    _nav_drawer()
+    _nav_header()
     with ui.column().classes("p-6 w-full"):
         ingest.page()
 
 
 @ui.page("/notes")
 def notes_page() -> None:
-    _nav_drawer()
+    _nav_header()
     with ui.column().classes("p-6 w-full"):
         notes.page()
 
 
 @ui.page("/config")
 def config_page() -> None:
-    _nav_drawer()
+    _nav_header()
     with ui.column().classes("p-6 w-full"):
         config_editor.page()
 
 
-def run(host: str = "127.0.0.1", port: int = 8080, reload: bool = False) -> None:
+def run(host: str = "127.0.0.1", port: int = 8765, reload: bool = False) -> None:
     ui.run(host=host, port=port, reload=reload, title="bean-sync", dark=None, show=False, favicon="🫘")

@@ -1,0 +1,29 @@
+name: Beansync
+description: "LLM-assisted beancount personal finance syncing via email and browser automation"
+version: "0.1.0"
+slug: beansync
+url: "https://github.com/traverseda/beansync"
+arch:
+  - amd64
+init: false
+
+ingress: true
+ingress_port: 8765
+panel_icon: mdi:currency-usd
+panel_title: Beansync
+
+map:
+  - config:rw
+  - share:rw
+
+# Secrets are read as SECRET_<UPPER_NAME> env vars by beansync.
+# Add API keys here; leave blank to configure later via bean-sync's config editor.
+options:
+  ledger_dir: /config/beansync
+  openrouter_api_key: ""
+  anthropic_api_key: ""
+
+schema:
+  ledger_dir: str
+  openrouter_api_key: str?
+  anthropic_api_key: str?

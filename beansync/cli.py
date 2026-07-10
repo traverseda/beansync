@@ -237,7 +237,7 @@ def parse(
 @app.command()
 def serve(
     host: str = typer.Option("127.0.0.1", "--host", help="Host to bind"),
-    port: int = typer.Option(8080, "--port", help="Port to listen on"),
+    port: int = typer.Option(8765, "--port", help="Port to listen on"),
     reload: bool = typer.Option(False, "--reload/--no-reload", help="Auto-reload on file changes"),
 ) -> None:
     """Launch the web UI."""

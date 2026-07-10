@@ -144,11 +144,14 @@ TOOLS = [
         "function": {
             "name": "ask_user",
             "description": (
-                "Ask the user a clarifying question when you are uncertain about the correct account, payee, or narration. "
+                "Ask the user a clarifying question when you are uncertain about the correct account, payee, narration, "
+                "or how to split a transaction across multiple categories. "
                 "Call this instead of guessing whenever certainty is below 80. "
                 "Write the question as a complete sentence that includes enough context to answer without re-reading the email: "
                 "merchant name, amount, and why you are unsure. "
                 "Example: 'What account should be used for NGDIRECT $47.23? This looks like a bank fee but could be a transfer.' "
+                "For cash withdrawals or mixed-category purchases, ask how to split: "
+                "'How should the $100.00 ATM withdrawal be split? e.g. groceries + gas.' "
                 "Always provide 'options' when there are plausible candidates — format each option as "
                 "'Account:SubAccount — brief reason it fits', e.g. 'Expenses:Financial — bank service fee' or "
                 "'Assets:Savings:CUA — internal transfer'. The user cannot see the source email."
@@ -222,6 +225,15 @@ Respond with raw JSON only — no markdown fences, no beancount syntax, no prose
   ]
 }}
 
+Split transaction example (multiple expense postings):
+{{
+  "postings": [
+    {{"account": "Expenses:Food:Groceries", "amount": "35.00", "currency": "CAD"}},
+    {{"account": "Expenses:Household", "amount": "15.00", "currency": "CAD"}},
+    {{"account": "Assets:Cash", "amount": "-50.00", "currency": "CAD"}}
+  ]
+}}
+
 IMPORTANT: "amount" must be a plain decimal string like "57.49" or "-57.49". Never include the currency symbol or unit inside "amount". "currency" is always a separate field.
 
 Rules:
@@ -232,6 +244,7 @@ Rules:
 - for recurring subscription services (streaming, software, memberships), use a dedicated sub-account under the appropriate category, e.g. Expenses:Entertainment:Spotify, Expenses:BillsAndUtilities:Youtube — not the bare parent account
 - certainty is your confidence (0-100) in the account classification; if certainty would be below 80, call ask_user — include merchant name, amount, and your uncertainty reason in the question, and provide account options formatted as "Account — why it fits"
 - amounts must balance to zero; credit card charges are: expense positive, liability negative (e.g. Expenses:X +38.69, Liabilities:CreditCard:Collabria -38.69)
+- SPLIT TRANSACTIONS: use multiple expense postings when a single charge covers distinct categories (e.g. a cash withdrawal split between groceries and gas, a store where you bought both food and household items); call ask_user to find out how to split if the breakdown is not evident from the source
 
 Notes (persistent memory):
 - The source context includes a "Relevant notes" section listing previously saved facts about merchants and payees seen in this source.
@@ -415,6 +428,15 @@ Respond with raw JSON only — no markdown fences, no beancount syntax, no prose
   ]
 }}
 
+Split transaction example (multiple expense postings that sum to the total):
+{{
+  "postings": [
+    {{"account": "Expenses:Food:Groceries", "amount": "42.00", "currency": "CAD"}},
+    {{"account": "Expenses:Household", "amount": "18.00", "currency": "CAD"}},
+    {{"account": "Assets:Checking:CUA", "amount": "-60.00", "currency": "CAD"}}
+  ]
+}}
+
 IMPORTANT: "amount" must be a plain decimal string like "57.49" or "-57.49". Never include the currency symbol inside "amount". "currency" is always a separate field.
 
 Rules:
@@ -426,6 +448,7 @@ Rules:
 - account should follow the taxonomy in the Accounts list below
 - certainty is your confidence (0-100); if below 80, call ask_user
 - amounts must balance to zero
+- SPLIT TRANSACTIONS: if the receipt shows items from clearly distinct categories (e.g. groceries and household supplies at a superstore), use multiple expense postings; call ask_user to clarify the split if line-item details are unclear
 
 Notes (persistent memory):
 - Check "Relevant notes" for previously saved merchant facts before classifying.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import fcntl
 import os
 import pty
@@ -10,14 +11,62 @@ import threading
 from nicegui import ui
 from nicegui.events import XtermDataEventArguments, XtermResizeEventArguments
 
-from beansync.config import load_sources
+from beansync.config import LEDGER, load_sources
+
+
+async def _commit_dialog() -> None:
+    import asyncio
+
+    default_msg = f"Update ledger {datetime.date.today()}"
+    with ui.dialog() as dialog, ui.card().classes("w-full max-w-2xl"):
+        ui.label("Commit Changes").classes("text-lg font-semibold mb-2")
+        with ui.element("pre").classes("text-xs bg-gray-800 p-2 rounded overflow-auto max-h-48 w-full"):
+            status_text = ui.label("Loading…").classes("text-gray-400")
+        msg_input = ui.input("Commit message", value=default_msg).classes("w-full")
+        error_label = ui.label("").classes("text-sm text-red-400")
+
+        async def do_commit() -> None:
+            msg = msg_input.value.strip()
+            if not msg:
+                error_label.set_text("Commit message required.")
+                return
+            add = await asyncio.to_thread(
+                subprocess.run, ["git", "add", "-A"],
+                capture_output=True, text=True, cwd=str(LEDGER.parent),
+            )
+            if add.returncode != 0:
+                error_label.set_text(f"git add failed: {add.stderr.strip()}")
+                return
+            commit = await asyncio.to_thread(
+                subprocess.run, ["git", "commit", "-m", msg],
+                capture_output=True, text=True, cwd=str(LEDGER.parent),
+            )
+            if commit.returncode == 0:
+                ui.notify("Committed successfully.", type="positive")
+                dialog.close()
+            else:
+                error_label.set_text(commit.stdout.strip() or commit.stderr.strip())
+
+        with ui.row().classes("w-full justify-end gap-2 mt-2"):
+            ui.button("Cancel", on_click=dialog.close).props("flat")
+            ui.button("Commit", on_click=do_commit).props("color=primary")
+
+    dialog.open()
+
+    result = await asyncio.to_thread(
+        subprocess.run, ["git", "status", "--short"],
+        capture_output=True, text=True, cwd=str(LEDGER.parent),
+    )
+    status_text.set_text(result.stdout.strip() or "No changes to commit.")
 
 
 def page() -> None:
     sources = load_sources()
     selected: dict[str, bool] = {s.name: True for s in sources}
     with ui.column().classes("w-full gap-4"):
-        ui.label("Ingest").classes("text-2xl font-bold")
+        with ui.row().classes("w-full items-center"):
+            ui.label("Ingest").classes("text-2xl font-bold flex-1")
+            ui.button("Commit", icon="commit", on_click=_commit_dialog).props("outline")
 
         term = ui.xterm().classes("w-full").style("height: 400px; overflow: hidden")
 
