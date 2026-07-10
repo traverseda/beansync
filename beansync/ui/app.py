@@ -8,8 +8,11 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 
 class _HAIngressMiddleware:
-    """Translate HA ingress X-Ingress-Path header into ASGI root_path so NiceGUI
-    prefixes its static asset URLs correctly when served behind HA ingress."""
+    """Strip the HA ingress path prefix from scope['path'] and set it as root_path.
+
+    The HA supervisor forwards requests with the full path including the ingress
+    prefix (e.g. /api/hassio_ingress/TOKEN/_nicegui/...) rather than stripping
+    it before proxying. We must remove the prefix so NiceGUI's routes match."""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -19,7 +22,11 @@ class _HAIngressMiddleware:
             headers = dict(scope.get("headers", []))
             ingress_path = headers.get(b"x-ingress-path", b"").decode().rstrip("/")
             if ingress_path:
-                scope = {**scope, "root_path": ingress_path}
+                path: str = scope.get("path", "")
+                if path.startswith(ingress_path):
+                    path = path[len(ingress_path):] or "/"
+                scope = {**scope, "root_path": ingress_path, "path": path,
+                         "raw_path": path.encode()}
         await self.app(scope, receive, send)
 
 
