@@ -17,6 +17,8 @@ dependencies = [
     "requests",
     "typer",
     "nh3>=0.3.5",
+    "beancount>=3",
+    "beanquery",
 ]
 
 [project.scripts]

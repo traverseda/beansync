@@ -4,8 +4,11 @@ import json
 import os
 import re
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
+
+_BEAN_QUERY = str(Path(sys.executable).parent / "bean-query")
 from typing import Callable
 
 import litellm  # type: ignore[import-not-found]
@@ -48,7 +51,7 @@ def tavily_search(merchant: str) -> str:
 
 def query_ledger(query: str) -> str:
     result = subprocess.run(
-        ["bean-query", str(LEDGER), query],
+        [_BEAN_QUERY, str(LEDGER), query],
         capture_output=True, text=True, timeout=15,
     )
     output = (result.stdout + result.stderr).strip()
