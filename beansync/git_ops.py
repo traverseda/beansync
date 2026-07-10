@@ -8,12 +8,13 @@ from pathlib import Path
 
 from loguru import logger  # type: ignore[import-not-found]
 
-# HA add-ons get an implicit per-add-on /data volume regardless of the `map:`
-# list in config.yaml, and unlike /config or /share it is not browsable
-# through HA's file-explorer add-ons — the right place for private key
-# material, since the ledger dir itself becomes a git clone target and is
-# user-browsable.
-SSH_DIR = Path(os.environ.get("BEANSYNC_SSH_DIR", "/data/ssh"))
+# Unlike secrets.yaml, the SSH key never defaults into the ledger dir —
+# gitignore is one missed entry away from pushing a private key, so it always
+# lives in a fixed per-user location outside the git tree. Locally that's the
+# user's XDG data dir; the HA add-on overrides this via BEANSYNC_SSH_DIR=/data/ssh
+# (set in addon/run.sh) — /data is an implicit per-add-on volume that, unlike
+# /config or /share, isn't browsable through HA's file-explorer add-ons.
+SSH_DIR = Path(os.environ.get("BEANSYNC_SSH_DIR", str(Path.home() / ".local" / "share" / "beansync" / "ssh")))
 KEY_PATH = SSH_DIR / "id_ed25519"
 PUB_KEY_PATH = SSH_DIR / "id_ed25519.pub"
 
@@ -121,7 +122,14 @@ def clone(url: str, target: Path) -> subprocess.CompletedProcess:
 
 
 def pull(path: Path) -> subprocess.CompletedProcess:
-    return _run(["git", "pull"], cwd=path, env=_git_env())
+    # --no-rebase is explicit rather than relying on pull.rebase/merge.ff
+    # config: this runs headlessly in the add-on container with no way to
+    # `git config` interactively, and modern git refuses to pick a
+    # reconciliation strategy on its own once branches have diverged
+    # ("Need to specify how to reconcile divergent branches"). A real content
+    # conflict still leaves the repo in a conflicted state and pull() failing
+    # with that in stderr — resolving conflicts needs a human, not autopull.
+    return _run(["git", "pull", "--no-rebase"], cwd=path, env=_git_env())
 
 
 def push(path: Path) -> subprocess.CompletedProcess:

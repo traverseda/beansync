@@ -124,6 +124,12 @@ _GITIGNORE = """\
 # State files (safe to delete — will be rebuilt on next sync)
 sources/state/
 
+# NiceGUI's local UI storage (chat history cache) — not ledger data, and
+# rewritten on every run, so it doesn't belong in the ledger dir at all.
+# Normally lives outside the ledger dir entirely; this is a defensive
+# backstop in case NICEGUI_STORAGE_PATH is ever unset.
+.nicegui/
+
 # LLM merchant notes (personal, keep in your private ledger repo)
 # .llm_notes.json
 """

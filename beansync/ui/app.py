@@ -1,6 +1,21 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+# NiceGUI reads NICEGUI_STORAGE_PATH as a class attribute at import time (see
+# nicegui/storage.py), so this must run before `from nicegui import ...`
+# below. Without it, app.storage.general (used by chat.py to persist chat
+# history) writes .nicegui/storage-general.json into the ledger dir — which
+# is a git working tree (see git_ops.py) that gets rewritten on every run and
+# will conflict with every future `git pull`. This isn't ledger data, so it
+# doesn't belong there at all; addon/run.sh overrides this to /data/nicegui
+# in the container, same as BEANSYNC_SECRETS_DIR/BEANSYNC_SSH_DIR.
+os.environ.setdefault("NICEGUI_STORAGE_PATH", str(Path.home() / ".local" / "share" / "beansync" / "nicegui"))
+# NiceGUI's FilePersistentDict.backup() only does mkdir(exist_ok=True), not
+# parents=True — it can't create a multi-level path from scratch, so the dir
+# has to exist before NiceGUI's first write.
+Path(os.environ["NICEGUI_STORAGE_PATH"]).mkdir(parents=True, exist_ok=True)
 
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from loguru import logger
@@ -242,9 +257,14 @@ async def print_packet(path: str) -> HTMLResponse | PlainTextResponse:
     return HTMLResponse(html_doc)
 
 
-def _nav_header() -> None:
+def _nav_header(request: Request) -> None:
+    # HA's ingress panel already shows "Beansync" in its own title bar
+    # (addon/config.yaml panel_title) — repeating a brand label here just
+    # wastes vertical space in the ingress iframe, especially on mobile.
+    behind_ingress = bool(request.headers.get("x-ingress-path"))
     with ui.header().classes("bg-gray-900 items-center gap-1 px-4"):
-        ui.label("bean-sync").classes("text-lg font-bold text-green-400 mr-2")
+        if not behind_ingress:
+            ui.label("bean-sync").classes("text-lg font-bold text-green-400 mr-2")
         for _label, _path in [
             ("Dashboard", "/"),
             ("Ingest", "/ingest"),
@@ -279,28 +299,28 @@ def _nav_header() -> None:
 
 
 @ui.page("/")
-def index() -> None:
-    _nav_header()
+def index(request: Request) -> None:
+    _nav_header(request)
     dashboard.page()
 
 
 @ui.page("/ingest")
-def ingest_page() -> None:
-    _nav_header()
+def ingest_page(request: Request) -> None:
+    _nav_header(request)
     with ui.column().classes("p-6 w-full"):
         ingest.page()
 
 
 @ui.page("/notes")
-def notes_page() -> None:
-    _nav_header()
+def notes_page(request: Request) -> None:
+    _nav_header(request)
     with ui.column().classes("p-6 w-full"):
         notes.page()
 
 
 @ui.page("/config")
-def config_page() -> None:
-    _nav_header()
+def config_page(request: Request) -> None:
+    _nav_header(request)
     with ui.column().classes("p-6 w-full"):
         config_editor.page()
 
