@@ -61,6 +61,20 @@ class _NiceGUIStaticCORSMiddleware:
 nicegui_app.add_middleware(_HAIngressMiddleware)
 nicegui_app.add_middleware(_NiceGUIStaticCORSMiddleware)
 
+
+from starlette.requests import Request
+
+
+@nicegui_app.get("/_debug/ingress")
+async def debug_ingress(request: Request) -> dict:
+    return {
+        "path": request.scope.get("path"),
+        "root_path": request.scope.get("root_path"),
+        "raw_path": request.scope.get("raw_path", b"").decode(),
+        "x_ingress_path": request.headers.get("x-ingress-path", "(not set)"),
+        "headers": dict(request.headers),
+    }
+
 from beansync.ui.pages import dashboard, ingest, notes
 from beansync.ui.pages import config_editor
 from beansync.ui.pages import chat as chat_module
