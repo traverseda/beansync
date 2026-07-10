@@ -75,29 +75,47 @@ def remote_url(path: Path) -> str | None:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
+def _move_children(src: Path, dst: Path) -> None:
+    """Move every entry inside `src` into `dst` (both must exist)."""
+    for entry in src.iterdir():
+        entry.rename(dst / entry.name)
+
+
 def clone(url: str, target: Path) -> subprocess.CompletedProcess:
     """Clone `url` into `target`.
 
-    If `target` already exists and is non-empty, it's moved aside to
-    `<target>.backup.<timestamp>` first. On failure, the partial clone is
-    removed and the backup (if any) is restored, so a bad clone never leaves
-    the ledger dir missing or half-populated.
+    If `target` already exists and is non-empty, its contents are moved
+    aside to `<target>.backup.<timestamp>` first — `target` itself is left
+    in place and only emptied, never renamed, since `target` may be the
+    server process's own current working directory (bean-sync serve runs
+    with the ledger dir as cwd) and renaming a directory that's a process's
+    cwd fails with EBUSY on Linux. On failure, the partial clone is removed
+    and the backup contents are moved back, so a bad clone never leaves the
+    ledger dir missing or half-populated.
     """
+    # Resolve first: LEDGER.parent is the bare relative Path(".") (bean-sync
+    # serve runs with the ledger dir as cwd), and Path(".").parent/.name are
+    # both degenerate ("." and "" respectively) — building a backup path from
+    # those would nest the backup inside itself instead of beside it.
+    target = target.resolve()
     backup: Path | None = None
     if target.exists() and any(target.iterdir()):
         backup = target.parent / f"{target.name}.backup.{int(time.time())}"
-        target.rename(backup)
-        logger.info("Moved existing ledger dir to {} before clone", backup)
+        backup.mkdir(parents=True)
+        _move_children(target, backup)
+        logger.info("Moved existing ledger contents to {} before clone", backup)
 
     target.mkdir(parents=True, exist_ok=True)
     result = _run(["git", "clone", url, str(target)], env=_git_env())
 
     if result.returncode != 0:
         logger.warning("git clone failed: {}", result.stderr.strip())
-        shutil.rmtree(target, ignore_errors=True)
+        for entry in target.iterdir():
+            shutil.rmtree(entry) if entry.is_dir() and not entry.is_symlink() else entry.unlink()
         if backup is not None:
-            backup.rename(target)
-            logger.info("Restored ledger dir from backup after failed clone")
+            _move_children(backup, target)
+            backup.rmdir()
+            logger.info("Restored ledger contents from backup after failed clone")
 
     return result
 
