@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+from loguru import logger
 from nicegui import app as nicegui_app, ui
+from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 
@@ -50,7 +52,6 @@ class _NiceGUIStaticCORSMiddleware:
                 headers.extend([
                     (b"access-control-allow-origin", b"*"),
                     (b"cross-origin-resource-policy", b"cross-origin"),
-                    (b"cache-control", b"no-store"),
                 ])
                 message = {**message, "headers": headers}
             await send(message)
@@ -58,11 +59,39 @@ class _NiceGUIStaticCORSMiddleware:
         await self.app(scope, receive, send_with_cors)
 
 
+class _NotFoundLoggerMiddleware:
+    """Log every 404 with the routed path and ingress header so production
+    failures are diagnosable straight from the add-on log."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_logging(message: dict) -> None:
+            if message["type"] == "http.response.start" and message["status"] == 404:
+                headers = dict(scope.get("headers", []))
+                logger.warning(
+                    "404 {} {} (root_path={!r}, x-ingress-path={!r})",
+                    scope.get("method"),
+                    scope.get("path"),
+                    scope.get("root_path", ""),
+                    headers.get(b"x-ingress-path", b"").decode(),
+                )
+            await send(message)
+
+        await self.app(scope, receive, send_logging)
+
+
+# Starlette runs later-added middleware first, so execution order is:
+# CORS (sees the supervisor-stripped path) -> HAIngress (restores the prefix)
+# -> NotFoundLogger (sees the final routed path) -> router.
+nicegui_app.add_middleware(_NotFoundLoggerMiddleware)
 nicegui_app.add_middleware(_HAIngressMiddleware)
 nicegui_app.add_middleware(_NiceGUIStaticCORSMiddleware)
-
-
-from starlette.requests import Request
 
 
 @nicegui_app.get("/_debug/ingress")
@@ -277,5 +306,8 @@ def config_page() -> None:
 
 
 def run(host: str = "127.0.0.1", port: int = 8765, reload: bool = False) -> None:
+    # no-cache: assets revalidate via ETag (cheap 304s). NiceGUI's default is a
+    # year-long immutable cache-control, which let Cloudflare / HA's service
+    # worker / browsers keep serving broken assets long after fixes shipped.
     ui.run(host=host, port=port, reload=reload, title="bean-sync", dark=None, show=False, favicon="🫘",
-           gzip_middleware_factory=None)
+           gzip_middleware_factory=None, cache_control_directives="no-cache")

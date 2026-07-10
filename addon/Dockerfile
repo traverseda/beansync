@@ -28,10 +28,12 @@ ENV PATH="/root/.local/bin:/opt/venv/bin:$PATH"
 # tsx for running stagehand scripts via npx
 RUN npm install -g tsx
 
-# Install beansync into a venv (avoids Debian's externally-managed-environment restriction)
+# Install beansync into a venv (avoids Debian's externally-managed-environment restriction).
+# uv sync --locked installs the exact versions from uv.lock, so the image runs
+# the same dependency versions that were tested locally.
 WORKDIR /app
 COPY . .
-RUN uv venv /opt/venv && uv pip install --no-cache --python /opt/venv/bin/python .
+RUN UV_PROJECT_ENVIRONMENT=/opt/venv uv sync --locked --no-dev --no-editable --no-cache
 
 COPY addon/run.sh /run.sh
 RUN chmod +x /run.sh

@@ -362,8 +362,11 @@ def page() -> None:
                             label = _field_label(f)
                             current = getattr(source, f.name)
                             if ft == "secret":
+                                secret_val = _secret_name(current)
                                 inp[f.name] = (
-                                    ui.select(known_secrets, value=_secret_name(current), label=label)
+                                    ui.select(known_secrets,
+                                              value=secret_val if secret_val in known_secrets else None,
+                                              label=label)
                                     .props("dense clearable")
                                     .classes("w-48")
                                 )
