@@ -169,7 +169,47 @@ The LLM accumulates merchant notes in `.llm_notes.json`. Keys are regex patterns
 bean-sync serve
 ```
 
-Opens a web interface at `http://127.0.0.1:8080` with a dashboard (Sankey money-flow chart, transaction table), an ingest runner with live terminal output, a config editor, and a merchant notes editor.
+Opens a web interface at `http://127.0.0.1:8765` with a dashboard (Sankey money-flow chart, transaction table), an ingest runner with live terminal output, a config editor, and a merchant notes editor.
+
+## Home Assistant add-on
+
+Beansync can run as a [Home Assistant](https://www.home-assistant.io/) add-on, accessible via the HA sidebar.
+
+> **Requires HA OS or HA Supervised** — the add-on system is not available in HA Container or Core installs.
+
+### Add the repository
+
+1. In HA, go to **Settings → Add-ons → ⋮ (top-right) → Repositories**
+2. Paste `https://github.com/traverseda/beansync` and click **Add**
+3. Refresh the page — **Beansync** will appear in the add-on store under a "Beansync" section
+4. Click **Install**
+
+### Configure API keys
+
+Open the add-on's **Configuration** tab before starting it:
+
+```yaml
+ledger_dir: /config/beansync       # where your ledger lives (HA config dir)
+openrouter_api_key: sk-or-...      # required for LLM parsing
+anthropic_api_key: ""              # optional; used by computer-use sources
+```
+
+> The system keyring is not available inside Docker. Secrets configured here are exported as
+> `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY` env vars automatically. For any `!secret` refs in
+> your `config.yaml`, set the corresponding `SECRET_<UPPER_NAME>` env var via the HA options
+> (use the raw YAML editor under **Configuration**).
+
+### First run
+
+On first start, beansync initialises a skeleton ledger at `/config/beansync/` (edit via
+**Settings → System → Storage → File editor** or your preferred editor). The web UI is
+available via the **Open Web UI** button on the add-on info page, or from the HA sidebar panel.
+
+### Headed browser (bot detection)
+
+The `--headed` checkbox in the **Ingest** page works inside the add-on — beansync runs
+Chromium against a virtual framebuffer (Xvfb), so it behaves exactly like a desktop browser
+without needing a physical display.
 
 ## Environment variables
 
