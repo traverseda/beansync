@@ -8,11 +8,13 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 
 class _HAIngressMiddleware:
-    """Strip the HA ingress path prefix from scope['path'] and set it as root_path.
+    """Fix path and root_path so Starlette routing works behind HA ingress.
 
-    The HA supervisor forwards requests with the full path including the ingress
-    prefix (e.g. /api/hassio_ingress/TOKEN/_nicegui/...) rather than stripping
-    it before proxying. We must remove the prefix so NiceGUI's routes match."""
+    Starlette's get_route_path() strips root_path from scope['path'] before
+    matching routes — and does so at every Mount level. This means path must
+    always START WITH root_path, otherwise route matching and StaticFiles path
+    resolution both break. We set root_path to the ingress prefix and ensure
+    path includes that prefix, regardless of whether the supervisor stripped it."""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -23,8 +25,8 @@ class _HAIngressMiddleware:
             ingress_path = headers.get(b"x-ingress-path", b"").decode().rstrip("/")
             if ingress_path:
                 path: str = scope.get("path", "")
-                if path.startswith(ingress_path):
-                    path = path[len(ingress_path):] or "/"
+                if not path.startswith(ingress_path):
+                    path = ingress_path + path
                 scope = {**scope, "root_path": ingress_path, "path": path,
                          "raw_path": path.encode()}
         await self.app(scope, receive, send)
