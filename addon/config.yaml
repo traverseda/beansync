@@ -3,6 +3,7 @@ description: "LLM-assisted beancount personal finance syncing via email and brow
 version: "0.1.0"
 slug: beansync
 url: "https://github.com/traverseda/beansync"
+image: ghcr.io/traverseda/beansync
 arch:
   - amd64
 init: false
