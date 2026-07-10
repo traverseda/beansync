@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2 \
     libgbm1 \
     git \
+    openssh-client \
     jq \
     && rm -rf /var/lib/apt/lists/*
 

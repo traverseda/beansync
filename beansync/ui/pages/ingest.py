@@ -11,6 +11,7 @@ import threading
 from nicegui import ui
 from nicegui.events import XtermDataEventArguments, XtermResizeEventArguments
 
+from beansync import git_ops
 from beansync.config import LEDGER, load_sources
 
 
@@ -60,12 +61,33 @@ async def _commit_dialog() -> None:
     status_text.set_text(result.stdout.strip() or "No changes to commit.")
 
 
+async def _do_pull() -> None:
+    import asyncio
+    result = await asyncio.to_thread(git_ops.pull, LEDGER.parent)
+    if result.returncode != 0:
+        ui.notify(f"Pull failed: {result.stderr.strip()}", type="negative")
+        return
+    ui.notify(result.stdout.strip() or "Already up to date.", type="positive")
+
+
+async def _do_push() -> None:
+    import asyncio
+    result = await asyncio.to_thread(git_ops.push, LEDGER.parent)
+    if result.returncode != 0:
+        ui.notify(f"Push failed: {result.stderr.strip()}", type="negative")
+        return
+    ui.notify(result.stdout.strip() or result.stderr.strip() or "Pushed.", type="positive")
+
+
 def page() -> None:
     sources = load_sources()
     selected: dict[str, bool] = {s.name: True for s in sources}
     with ui.column().classes("w-full gap-4"):
         with ui.row().classes("w-full items-center"):
             ui.label("Ingest").classes("text-2xl font-bold flex-1")
+            if git_ops.is_git_repo(LEDGER.parent):
+                ui.button("Pull", icon="cloud_download", on_click=_do_pull).props("outline")
+                ui.button("Push", icon="cloud_upload", on_click=_do_push).props("outline")
             ui.button("Commit", icon="commit", on_click=_commit_dialog).props("outline")
 
         term = ui.xterm().classes("w-full").style("height: 400px; overflow: hidden")

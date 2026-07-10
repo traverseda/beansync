@@ -170,6 +170,7 @@ def page() -> None:
         gui_container: list[ui.column] = []
         yaml_editor: list[ui.codemirror] = []
         secrets_container: list[ui.column] = []
+        git_container: list[ui.column] = []
 
         # Per-source input refs: list of {field_name: widget}
         source_inputs: list[dict] = []
@@ -265,6 +266,105 @@ def page() -> None:
                         _render_gui()
 
                     ui.button("Add Secret", icon="add", on_click=_add_secret).props("color=primary dense")
+
+        def _render_git() -> None:
+            import asyncio
+            from beansync import git_ops
+            from beansync.config import LEDGER
+
+            if not git_container:
+                return
+            git_container[0].clear()
+            with git_container[0]:
+                with ui.row().classes("items-center gap-2"):
+                    ui.icon("vpn_key").classes("text-yellow-400")
+                    if git_ops.has_ssh_key():
+                        ui.label("SSH key generated").classes("text-sm")
+                    else:
+                        ui.label("No SSH key yet").classes("text-sm text-gray-400")
+                    ui.space()
+
+                    async def _do_keygen(force: bool = False) -> None:
+                        try:
+                            await asyncio.to_thread(git_ops.generate_ssh_key, force)
+                        except git_ops.GitError as e:
+                            ui.notify(str(e), type="negative")
+                            return
+                        ui.notify("SSH key generated.", type="positive")
+                        _render_git()
+
+                    async def _regen_confirm() -> None:
+                        with ui.dialog() as dialog, ui.card():
+                            ui.label(
+                                "Regenerating invalidates the deploy key already "
+                                "registered on your git host. Continue?"
+                            ).classes("text-sm")
+                            with ui.row().classes("w-full justify-end gap-2 mt-2"):
+                                ui.button("Cancel", on_click=dialog.close).props("flat")
+
+                                async def _confirm() -> None:
+                                    dialog.close()
+                                    await _do_keygen(force=True)
+
+                                ui.button("Regenerate", on_click=_confirm).props("color=negative")
+                        dialog.open()
+
+                    if git_ops.has_ssh_key():
+                        ui.button("Regenerate", on_click=_regen_confirm).props("flat dense")
+                    else:
+                        ui.button("Generate SSH Key", icon="add", on_click=lambda: _do_keygen()).props("color=primary dense")
+
+                pubkey = git_ops.public_key()
+                if pubkey:
+                    ui.label(
+                        "Add this as a deploy key on your git host "
+                        "(e.g. GitHub: repo Settings → Deploy keys → Add key):"
+                    ).classes("text-xs text-gray-400")
+                    ui.code(pubkey).classes("w-full text-xs break-all")
+
+                ui.separator()
+
+                ledger_dir = LEDGER.parent
+                if git_ops.is_git_repo(ledger_dir):
+                    url = git_ops.remote_url(ledger_dir)
+                    with ui.row().classes("items-center gap-2"):
+                        ui.icon("check_circle").classes("text-green-400")
+                        ui.label(f"Connected to {url}" if url else "Git repo (no remote configured)").classes("text-sm font-mono")
+                else:
+                    ui.label(
+                        "Clone a remote repo into the ledger directory. Any existing "
+                        "files will be moved to a backup folder first."
+                    ).classes("text-xs text-gray-400")
+                    with ui.row().classes("items-end gap-2 flex-wrap"):
+                        url_input = ui.input("Repository URL").props("dense").classes("flex-1 min-w-64")
+
+                        async def _do_clone() -> None:
+                            url = url_input.value.strip()
+                            if not url:
+                                ui.notify("Repository URL is required", type="warning")
+                                return
+                            with ui.dialog() as dialog, ui.card():
+                                ui.label(
+                                    f"Any existing files in {ledger_dir} will be moved to a "
+                                    "timestamped backup folder, then the repository will be "
+                                    "cloned in their place. Continue?"
+                                ).classes("text-sm")
+                                with ui.row().classes("w-full justify-end gap-2 mt-2"):
+                                    ui.button("Cancel", on_click=dialog.close).props("flat")
+
+                                    async def _confirm_clone() -> None:
+                                        dialog.close()
+                                        result = await asyncio.to_thread(git_ops.clone, url, ledger_dir)
+                                        if result.returncode != 0:
+                                            ui.notify(f"Clone failed: {result.stderr.strip()}", type="negative")
+                                            return
+                                        ui.notify("Cloned successfully. Reloading…", type="positive")
+                                        ui.navigate.reload()
+
+                                    ui.button("Clone", on_click=_confirm_clone).props("color=primary")
+                            dialog.open()
+
+                        ui.button("Clone", icon="download", on_click=_do_clone).props("color=primary dense")
 
         def _render_gui() -> None:
             source_inputs.clear()
@@ -461,6 +561,10 @@ def page() -> None:
                 sc = ui.column().classes("w-full gap-2 p-2")
                 secrets_container.append(sc)
 
+            with ui.expansion("Git Repository", icon="commit").classes("w-full border border-gray-700 rounded"):
+                gc = ui.column().classes("w-full gap-2 p-2")
+                git_container.append(gc)
+
             col = ui.column().classes("w-full gap-3")
             gui_container.append(col)
 
@@ -491,4 +595,5 @@ def page() -> None:
             ui.button("Save", icon="save", on_click=_save).props("color=primary")
 
         _render_secrets()
+        _render_git()
         _render_gui()

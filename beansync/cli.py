@@ -5,11 +5,13 @@ from pathlib import Path
 import typer
 from loguru import logger  # type: ignore[import-not-found]
 
-from beansync.config import AnySource, CUASource, EmailSource, InboxSource, load_accounts, load_sources, write_primary_includes
+from beansync.config import LEDGER, AnySource, CUASource, EmailSource, InboxSource, load_accounts, load_sources, write_primary_includes
 
 app = typer.Typer(help="bean-sync: LLM-assisted beancount transaction ingestion")
 secrets_app = typer.Typer(help="Manage named secrets stored in the system keyring.")
 app.add_typer(secrets_app, name="secrets")
+git_app = typer.Typer(help="Manage the ledger's git remote.")
+app.add_typer(git_app, name="git")
 
 _SOURCES_TEMPLATE = """\
 # bean-sync source configuration — edit to match your accounts.
@@ -342,4 +344,60 @@ def secrets_delete(
         typer.confirm(f"Delete secret '{name}'?", abort=True)
     delete_secret(name)
     logger.success("Secret '{}' deleted.", name)
+
+
+# --- git subcommands ---
+
+@git_app.command("keygen")
+def git_keygen(
+    force: bool = typer.Option(False, "--force", help="Regenerate even if a key already exists"),
+) -> None:
+    """Generate an SSH key for git access, printing the public key to add as a deploy key."""
+    from beansync import git_ops
+    if git_ops.has_ssh_key() and not force:
+        print("An SSH key already exists. Use --force to regenerate (this invalidates")
+        print("the deploy key already registered on your git host).")
+        print()
+        print(git_ops.public_key())
+        return
+    pubkey = git_ops.generate_ssh_key(force=force)
+    logger.success("SSH key generated at {}", git_ops.KEY_PATH)
+    print()
+    print("Add this as a deploy key on your git host (e.g. GitHub: repo Settings")
+    print("→ Deploy keys → Add key):")
+    print()
+    print(pubkey)
+
+
+@git_app.command("clone")
+def git_clone(url: str = typer.Argument(help="Git remote URL to clone into the ledger directory")) -> None:
+    """Clone a remote repo into the ledger directory, backing up any existing contents."""
+    from beansync import git_ops
+    result = git_ops.clone(url, LEDGER.parent)
+    if result.returncode != 0:
+        logger.error("Clone failed: {}", result.stderr.strip())
+        raise typer.Exit(1)
+    logger.success("Cloned {} into {}", url, LEDGER.parent)
+
+
+@git_app.command("pull")
+def git_pull() -> None:
+    """Pull the latest changes from the ledger's git remote."""
+    from beansync import git_ops
+    result = git_ops.pull(LEDGER.parent)
+    if result.returncode != 0:
+        logger.error("Pull failed: {}", result.stderr.strip())
+        raise typer.Exit(1)
+    logger.success(result.stdout.strip() or "Already up to date.")
+
+
+@git_app.command("push")
+def git_push() -> None:
+    """Push local commits to the ledger's git remote."""
+    from beansync import git_ops
+    result = git_ops.push(LEDGER.parent)
+    if result.returncode != 0:
+        logger.error("Push failed: {}", result.stderr.strip())
+        raise typer.Exit(1)
+    logger.success(result.stdout.strip() or result.stderr.strip() or "Pushed.")
 
