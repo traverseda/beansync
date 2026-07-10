@@ -4,6 +4,26 @@ from pathlib import Path
 
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from nicegui import app as nicegui_app, ui
+from starlette.types import ASGIApp, Receive, Scope, Send
+
+
+class _HAIngressMiddleware:
+    """Translate HA ingress X-Ingress-Path header into ASGI root_path so NiceGUI
+    prefixes its static asset URLs correctly when served behind HA ingress."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] in ("http", "websocket"):
+            headers = dict(scope.get("headers", []))
+            ingress_path = headers.get(b"x-ingress-path", b"").decode().rstrip("/")
+            if ingress_path:
+                scope = {**scope, "root_path": ingress_path}
+        await self.app(scope, receive, send)
+
+
+nicegui_app.add_middleware(_HAIngressMiddleware)
 
 from beansync.ui.pages import dashboard, ingest, notes
 from beansync.ui.pages import config_editor
