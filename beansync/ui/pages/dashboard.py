@@ -4,8 +4,12 @@ import csv
 import datetime
 import io
 import subprocess
+import sys
 from collections import defaultdict
 from decimal import Decimal
+from pathlib import Path
+
+_BEAN_QUERY = str(Path(sys.executable).parent / "bean-query")
 
 from nicegui import ui
 
@@ -251,7 +255,7 @@ def _group_transactions(
 
 def _run_query(bql: str) -> list[list[str]]:
     result = subprocess.run(
-        ["bean-query", "-f", "csv", str(LEDGER), bql],
+        [_BEAN_QUERY, "-f", "csv", str(LEDGER), bql],
         capture_output=True, text=True, timeout=15,
     )
     output = result.stdout.strip()
