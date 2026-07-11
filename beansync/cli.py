@@ -196,7 +196,8 @@ def _run_ingest(names: list[str] | None, headed: bool, since: str | None) -> Non
             for cua_source in cua_batch:
                 with logger.contextualize(source=cua_source.name):
                     null_instr = llm.NULL_INSTRUCTION if cua_source.nullable else llm.NO_NULL_INSTRUCTION
-                    prompt = llm.SYSTEM_PROMPT_TEMPLATE.format(hint=cua_source.hint, accounts=accounts, null_instruction=null_instr)
+                    enrichment_note = llm.ENRICHMENT_NOTE if cua_source.enrichment else ""
+                    prompt = llm.SYSTEM_PROMPT_TEMPLATE.format(hint=cua_source.hint, accounts=accounts, null_instruction=null_instr, enrichment_note=enrichment_note)
                     llm.parse_unprocessed(cua_source, prompt, all_source_dirs, nullable=cua_source.nullable)
 
         elif source.plugin == "email-receipt":
@@ -205,7 +206,8 @@ def _run_ingest(names: list[str] | None, headed: bool, since: str | None) -> Non
             excluded_senders = [addr for s in all_sources if isinstance(s, EmailSource) for addr in s.sender]
             with logger.contextualize(source=source.name):
                 null_instr = llm.NULL_INSTRUCTION if source.nullable else llm.NO_NULL_INSTRUCTION
-                prompt = llm.SYSTEM_PROMPT_TEMPLATE.format(hint=source.hint, accounts=accounts, null_instruction=null_instr)
+                enrichment_note = llm.ENRICHMENT_NOTE if source.enrichment else ""
+                prompt = llm.SYSTEM_PROMPT_TEMPLATE.format(hint=source.hint, accounts=accounts, null_instruction=null_instr, enrichment_note=enrichment_note)
                 sync_email.ingest_receipt(source, prompt, all_source_dirs, since=since_date, excluded_senders=excluded_senders)
             i += 1
 
@@ -215,11 +217,12 @@ def _run_ingest(names: list[str] | None, headed: bool, since: str | None) -> Non
             with logger.contextualize(source=source.name):
                 source.fetch(headed=headed, since=since_date)  # type: ignore[call-arg]
                 null_instr = llm.NULL_INSTRUCTION if source.nullable else llm.NO_NULL_INSTRUCTION
+                enrichment_note = llm.ENRICHMENT_NOTE if source.enrichment else ""
                 if parse_mode == "image":
-                    prompt = llm.RECEIPT_SYSTEM_PROMPT_TEMPLATE.format(hint=source.hint, accounts=accounts, null_instruction=null_instr)
+                    prompt = llm.RECEIPT_SYSTEM_PROMPT_TEMPLATE.format(hint=source.hint, accounts=accounts, null_instruction=null_instr, enrichment_note=enrichment_note)
                     llm.parse_unprocessed_images(source, prompt, nullable=source.nullable)
                 else:
-                    prompt = llm.SYSTEM_PROMPT_TEMPLATE.format(hint=source.hint, accounts=accounts, null_instruction=null_instr)
+                    prompt = llm.SYSTEM_PROMPT_TEMPLATE.format(hint=source.hint, accounts=accounts, null_instruction=null_instr, enrichment_note=enrichment_note)
                     llm.parse_unprocessed(source, prompt, all_source_dirs, nullable=source.nullable)
             i += 1
 
@@ -244,11 +247,12 @@ def parse(
             logger.warning("Source dir {} does not exist, skipping", source.source_dir)
             continue
         null_instr = llm.NULL_INSTRUCTION if source.nullable else llm.NO_NULL_INSTRUCTION
+        enrichment_note = llm.ENRICHMENT_NOTE if source.enrichment else ""
         if source.plugin == "image":
-            prompt = llm.RECEIPT_SYSTEM_PROMPT_TEMPLATE.format(hint=source.hint, accounts=accounts, null_instruction=null_instr)
+            prompt = llm.RECEIPT_SYSTEM_PROMPT_TEMPLATE.format(hint=source.hint, accounts=accounts, null_instruction=null_instr, enrichment_note=enrichment_note)
             llm.parse_unprocessed_images(source, prompt, nullable=source.nullable)
         else:
-            prompt = llm.SYSTEM_PROMPT_TEMPLATE.format(hint=source.hint, accounts=accounts, null_instruction=null_instr)
+            prompt = llm.SYSTEM_PROMPT_TEMPLATE.format(hint=source.hint, accounts=accounts, null_instruction=null_instr, enrichment_note=enrichment_note)
             llm.parse_unprocessed(source, prompt, all_source_dirs)
 
 

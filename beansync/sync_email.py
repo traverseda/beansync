@@ -221,6 +221,7 @@ def ingest_receipt(source: AnySource, system_prompt: str, all_source_dirs: list[
     Returns number of receipts found.
     """
     from beansync.llm import html_to_text, parse_text
+    from beansync.questions import QuestionDeferred, answered_context_for, clear_answered_for, queue_question
 
     enrichment_dirs = [d for d in all_source_dirs if d != source.source_dir]
     state = load_state()
@@ -276,7 +277,18 @@ def ingest_receipt(source: AnySource, system_prompt: str, all_source_dirs: list[
             dest = quarter_subdir(source.source_dir, dt)
             filename = f"{date_hint}_{safe_filename(subject)}_uid{uid}.html"
             label = dest / filename
-            entry = parse_text(text, label, system_prompt, enrichment_dirs or None)
+            try:
+                entry = parse_text(
+                    text, label, system_prompt, enrichment_dirs or None,
+                    is_enrichment=getattr(source, "enrichment", False),
+                    extra_context=answered_context_for(label),
+                )
+            except QuestionDeferred as exc:
+                # Leave the uid out of non_receipt_uids so it's re-checked (with the
+                # answer, once given) on the next run instead of being skipped forever.
+                queue_question(source.name, label, exc.question, exc.options)
+                continue
+            clear_answered_for(label)
 
             if entry:
                 dest.mkdir(parents=True, exist_ok=True)

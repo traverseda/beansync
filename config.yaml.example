@@ -35,7 +35,7 @@ sources:
     hint: |-
       Generic email receipts and invoices from any sender. These are enrichment context —
       they will be attached to authoritative bank/card transactions to help identify payee
-      and narration. Always make your best guess; do not call ask_user.
+      and narration.
       If the amount is missing or unclear, still produce a transaction with amount 0.00 CAD
       so the payee and narration context is preserved.
       Return null only for things that are definitely not a purchase or charge: newsletters,

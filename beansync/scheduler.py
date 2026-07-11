@@ -86,7 +86,14 @@ def _run_ingest_once() -> None:
     import typer
 
     from beansync.cli import ingest as cli_ingest
+    from beansync.llm import UNATTENDED
 
+    # No terminal is watching this thread, so ask_user() must not block on
+    # stdin — it raises QuestionDeferred instead, which the parse loops turn
+    # into a queued entry on the Questions page. Scoped to this thread's
+    # contextvar copy only; other ingest triggers (CLI, the Ingest page's
+    # PTY-backed "Run Ingest" button) are unaffected and keep blocking.
+    token = UNATTENDED.set(True)
     try:
         logger.info("Scheduled ingest starting")
         cli_ingest(names=None, headed=False, since=None)
@@ -101,6 +108,8 @@ def _run_ingest_once() -> None:
         # otherwise be silently dropped — this runs unattended with no
         # terminal watching it, so the log has to be self-contained.
         logger.error("Scheduled ingest failed: {}: {}", type(exc).__name__, exc)
+    finally:
+        UNATTENDED.reset(token)
 
 
 def start() -> None:

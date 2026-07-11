@@ -1,4 +1,5 @@
 import base64
+import contextvars
 import html as html_module
 import json
 import os
@@ -20,6 +21,12 @@ from pydantic import BaseModel, ValidationError  # type: ignore[import-not-found
 
 from beansync.config import LEDGER, MAX_RETRIES, MAX_SEARCHES, MAX_TOOL_ROUNDS, MODEL, VISION_MODEL, AnySource
 from beansync.notes import delete_note, get_notes_context, match_notes, save_note
+from beansync.questions import QuestionDeferred, answered_context_for, clear_answered_for, queue_question
+
+# Set True (by scheduler._run_ingest_once, and by the Questions page's targeted
+# re-parse) whenever ask_user() would otherwise block with no one watching a
+# terminal. ask_user() then raises QuestionDeferred instead of prompting.
+UNATTENDED: contextvars.ContextVar[bool] = contextvars.ContextVar("UNATTENDED", default=False)
 
 litellm.suppress_debug_info = True
 
@@ -59,6 +66,8 @@ def query_ledger(query: str) -> str:
 
 
 def ask_user(question: str, options: list[str] | None = None) -> str:
+    if UNATTENDED.get():
+        raise QuestionDeferred(question, options)
     logger.warning("   AI question: {}", question)
     if options:
         OTHER = "Other (type my own)..."
@@ -211,6 +220,13 @@ class Transaction(BaseModel):
 NULL_INSTRUCTION = "If the email is a denial, a decline, a verification code, or contains no actual charge, respond with exactly: null\n\nOtherwise respond"
 NO_NULL_INSTRUCTION = "Respond"
 
+ENRICHMENT_NOTE = (
+    "- ENRICHMENT SOURCE: this file is not an authoritative record, only context used to help "
+    "classify other transactions (e.g. attaching a receipt's payee to a bank alert). ask_user is "
+    "not available here — always make your best guess for account, payee, narration, and any "
+    "split, even at low certainty. Never leave a field blank.\n"
+)
+
 SYSTEM_PROMPT_TEMPLATE = """You extract personal credit card transactions from financial notification emails.
 
 Respond with raw JSON only — no markdown fences, no beancount syntax, no prose.
@@ -240,7 +256,7 @@ Split transaction example (multiple expense postings):
 IMPORTANT: "amount" must be a plain decimal string like "57.49" or "-57.49". Never include the currency symbol or unit inside "amount". "currency" is always a separate field.
 
 Rules:
-- This is personal household spending, not business accounting
+{enrichment_note}- This is personal household spending, not business accounting
 - payee is the merchant name only (e.g. "Steam", "Canada Computers"), not the email subject
 - narration is what was bought (e.g. "game purchase", "electronics"), not boilerplate like "Pending charge"
 - account should follow the taxonomy in the Accounts list below; you may create sub-accounts or new accounts not in the list when the situation clearly calls for it — the list is a guide, not a hard constraint
@@ -321,10 +337,16 @@ def parse_text(
     system_prompt: str,
     enrichment_dirs: list[Path] | None = None,
     nullable: bool = True,
+    is_enrichment: bool = False,
+    extra_context: str = "",
 ) -> str | None:
     """Run the LLM on already-extracted plain text. source_label is used for the beancount source field.
 
     When nullable=False, null responses are retried and a RuntimeError is raised on exhaustion.
+    is_enrichment=True means this source itself is enrichment-only context (not an authoritative
+    record), so ask_user is withheld and the LLM is instructed to always guess instead.
+    extra_context is prepended to the user content verbatim (e.g. previously-answered questions).
+    Raises QuestionDeferred if ask_user is called while UNATTENDED is set.
     """
     date_hint = source_label.stem[:10]
     user_content = f"Date: {date_hint}\n\n{text}"
@@ -342,7 +364,7 @@ def parse_text(
     notes_context = get_notes_context(matched)
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": notes_context + user_content},
+        {"role": "user", "content": extra_context + notes_context + user_content},
     ]
 
     last_error: Exception | None = None
@@ -350,7 +372,11 @@ def parse_text(
     tool_rounds = 0
     searches_done = 0
     while error_retries < MAX_RETRIES:
-        available = [t for t in TOOLS if t["function"]["name"] != "tavily_search" or searches_done < MAX_SEARCHES]
+        available = [
+            t for t in TOOLS
+            if (t["function"]["name"] != "tavily_search" or searches_done < MAX_SEARCHES)
+            and (t["function"]["name"] != "ask_user" or not is_enrichment)
+        ]
         tools = available if tool_rounds < MAX_TOOL_ROUNDS else None
         response = completion(
             model=MODEL,
@@ -405,10 +431,17 @@ def parse_text(
     raise RuntimeError(f"LLM failed for {source_label.name} after {MAX_RETRIES} retries: {last_error}")
 
 
-def parse_source(html_file: Path, system_prompt: str, enrichment_dirs: list[Path] | None = None, nullable: bool = True) -> str | None:
+def parse_source(
+    html_file: Path,
+    system_prompt: str,
+    enrichment_dirs: list[Path] | None = None,
+    nullable: bool = True,
+    is_enrichment: bool = False,
+    extra_context: str = "",
+) -> str | None:
     """Parse an on-disk HTML/text source file."""
     text = html_to_text(html_file.read_text(encoding="utf-8", errors="replace"))
-    return parse_text(text, html_file, system_prompt, enrichment_dirs, nullable=nullable)
+    return parse_text(text, html_file, system_prompt, enrichment_dirs, nullable=nullable, is_enrichment=is_enrichment, extra_context=extra_context)
 
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
@@ -443,7 +476,7 @@ Split transaction example (multiple expense postings that sum to the total):
 IMPORTANT: "amount" must be a plain decimal string like "57.49" or "-57.49". Never include the currency symbol inside "amount". "currency" is always a separate field.
 
 Rules:
-- This is personal household spending, not business accounting
+{enrichment_note}- This is personal household spending, not business accounting
 - payee is the store or vendor name only
 - narration is a brief description of what was purchased
 - Use the total/grand-total amount from the receipt, not subtotals
@@ -467,14 +500,19 @@ def parse_image(
     image_file: Path,
     system_prompt: str,
     nullable: bool = True,
+    is_enrichment: bool = False,
+    extra_context: str = "",
 ) -> str | None:
-    """Send a receipt image to a vision LLM and return a beancount entry or None."""
+    """Send a receipt image to a vision LLM and return a beancount entry or None.
+
+    Raises QuestionDeferred if ask_user is called while UNATTENDED is set.
+    """
     mime = IMAGE_MIME.get(image_file.suffix.lower(), "image/jpeg")
     image_data = base64.b64encode(image_file.read_bytes()).decode()
     date_hint = image_file.stem[:10]
 
     notes_context = get_notes_context({})
-    user_text = notes_context + f"Date hint (use if no date visible on receipt): {date_hint}\n\nExtract the transaction from this receipt."
+    user_text = extra_context + notes_context + f"Date hint (use if no date visible on receipt): {date_hint}\n\nExtract the transaction from this receipt."
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -489,7 +527,11 @@ def parse_image(
     tool_rounds = 0
     searches_done = 0
     while error_retries < MAX_RETRIES:
-        available = [t for t in TOOLS if t["function"]["name"] != "tavily_search" or searches_done < MAX_SEARCHES]
+        available = [
+            t for t in TOOLS
+            if (t["function"]["name"] != "tavily_search" or searches_done < MAX_SEARCHES)
+            and (t["function"]["name"] != "ask_user" or not is_enrichment)
+        ]
         tools = available if tool_rounds < MAX_TOOL_ROUNDS else None
         response = completion(
             model=VISION_MODEL,
@@ -557,7 +599,16 @@ def parse_unprocessed_images(source: AnySource, system_prompt: str, nullable: bo
         if sidecar.exists():
             continue
         logger.info("── {}", raw_file)
-        entry = parse_image(raw_file, system_prompt, nullable=nullable)
+        try:
+            entry = parse_image(
+                raw_file, system_prompt, nullable=nullable,
+                is_enrichment=getattr(source, "enrichment", False),
+                extra_context=answered_context_for(raw_file),
+            )
+        except QuestionDeferred as exc:
+            queue_question(source.name, raw_file, exc.question, exc.options)
+            continue
+        clear_answered_for(raw_file)
         sidecar.write_text(entry + "\n" if entry else "")
         if entry:
             logger.success("   ✓ {}\n{}", sidecar, entry)
@@ -589,7 +640,16 @@ def parse_unprocessed(source: AnySource, system_prompt: str, all_source_dirs: li
         if sidecar.exists():
             continue
         logger.info("── {}", raw_file)
-        entry = parse_source(raw_file, system_prompt, enrichment_dirs or None, nullable=nullable)
+        try:
+            entry = parse_source(
+                raw_file, system_prompt, enrichment_dirs or None, nullable=nullable,
+                is_enrichment=getattr(source, "enrichment", False),
+                extra_context=answered_context_for(raw_file),
+            )
+        except QuestionDeferred as exc:
+            queue_question(source.name, raw_file, exc.question, exc.options)
+            continue
+        clear_answered_for(raw_file)
         sidecar.write_text(entry + "\n" if entry else "")
         if entry:
             logger.success("   ✓ {}\n{}", sidecar, entry)

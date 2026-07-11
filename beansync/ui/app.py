@@ -123,7 +123,7 @@ async def debug_ingress(request: Request) -> dict:
         "headers": dict(request.headers),
     }
 
-from beansync.ui.pages import dashboard, ingest, notes
+from beansync.ui.pages import dashboard, ingest, notes, questions
 from beansync.ui.pages import config_editor
 from beansync.ui.pages import chat as chat_module
 
@@ -266,18 +266,22 @@ def _nav_header(request: Request) -> None:
     # (addon/config.yaml panel_title) — repeating a brand label here just
     # wastes vertical space in the ingress iframe, especially on mobile.
     behind_ingress = bool(request.headers.get("x-ingress-path"))
+    pending_questions = len(questions.questions_store.pending())
     with ui.header().classes("bg-gray-900 items-center gap-1 px-4"):
         if not behind_ingress:
             ui.label("bean-sync").classes("text-lg font-bold text-green-400 mr-2")
         for _label, _path in [
             ("Dashboard", "/"),
             ("Ingest", "/ingest"),
+            ("Questions", "/questions"),
             ("Notes", "/notes"),
             ("Config", "/config"),
         ]:
-            ui.button(_label, on_click=lambda p=_path: ui.navigate.to(p)).props(
+            btn = ui.button(_label, on_click=lambda p=_path: ui.navigate.to(p)).props(
                 "flat"
             ).classes("text-white hover:bg-gray-700")
+            if _path == "/questions" and pending_questions:
+                ui.badge(str(pending_questions), color="red").props("floating").move(btn)
         ui.button(icon="chat", on_click=lambda: chat_div.set_visibility(not chat_div.visible)).props(
             "flat dense"
         ).classes("text-white ml-auto").tooltip("Finance Assistant")
@@ -313,6 +317,13 @@ def ingest_page(request: Request) -> None:
     _nav_header(request)
     with ui.column().classes("p-6 w-full"):
         ingest.page()
+
+
+@ui.page("/questions")
+def questions_page(request: Request) -> None:
+    _nav_header(request)
+    with ui.column().classes("p-6 w-full"):
+        questions.page()
 
 
 @ui.page("/notes")

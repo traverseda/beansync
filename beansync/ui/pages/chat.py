@@ -412,6 +412,7 @@ async def _llm_loop_stream(
         source = sources[source_name]
         accounts = load_accounts()
         null_instr = llm.NULL_INSTRUCTION if source.nullable else llm.NO_NULL_INSTRUCTION
+        enrichment_note = llm.ENRICHMENT_NOTE if source.enrichment else ""
 
         questions: list[str] = []
 
@@ -425,16 +426,16 @@ async def _llm_loop_stream(
             parse_mode = getattr(type(source), "parse_mode", "standard")
             if parse_mode == "image":
                 prompt = llm.RECEIPT_SYSTEM_PROMPT_TEMPLATE.format(
-                    hint=source.hint, accounts=accounts, null_instruction=null_instr
+                    hint=source.hint, accounts=accounts, null_instruction=null_instr, enrichment_note=enrichment_note
                 )
-                result = llm.parse_image(p, prompt, nullable=source.nullable)
+                result = llm.parse_image(p, prompt, nullable=source.nullable, is_enrichment=source.enrichment)
             else:
                 all_source_dirs = [s.source_dir for s in load_sources()]
                 enrichment_dirs = [d for d in all_source_dirs if d != source.source_dir]
                 prompt = llm.SYSTEM_PROMPT_TEMPLATE.format(
-                    hint=source.hint, accounts=accounts, null_instruction=null_instr
+                    hint=source.hint, accounts=accounts, null_instruction=null_instr, enrichment_note=enrichment_note
                 )
-                result = llm.parse_source(p, prompt, enrichment_dirs=enrichment_dirs or None, nullable=source.nullable)
+                result = llm.parse_source(p, prompt, enrichment_dirs=enrichment_dirs or None, nullable=source.nullable, is_enrichment=source.enrichment)
         finally:
             if original is not None:
                 llm.TOOL_HANDLERS["ask_user"] = original
