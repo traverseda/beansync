@@ -1,6 +1,6 @@
 name: Beansync
 description: "LLM-assisted beancount personal finance syncing via email and browser automation"
-version: "0.1.12"
+version: "0.1.13"
 slug: beansync
 url: "https://github.com/traverseda/beansync"
 image: ghcr.io/traverseda/beansync
