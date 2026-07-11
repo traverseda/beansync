@@ -6,13 +6,13 @@ from pathlib import Path
 
 import yaml  # type: ignore[import-not-found]
 
-# Defaults to the ledger dir (cwd), matching every other path in config.py.
-# The ledger dir can be a git clone target (see git_ops.py) and ingest.py's
-# commit flow runs `git add -A`, so a secrets file living here can end up
-# committed — fine for a private repo the user controls, but worth knowing.
-# The HA add-on overrides this via BEANSYNC_SECRETS_DIR=/data (set in
-# addon/run.sh), since secret values never worked at all in that deployment
-# before (no keyring, no git repo to opt into either).
+# Defaults to the ledger dir (cwd), matching every other path in config.py —
+# including in the HA add-on, deliberately. The ledger dir can be a git clone
+# target (see git_ops.py) and ingest.py's commit flow runs `git add -A`, so a
+# secrets file living here travels with `git clone`/`pull` like any other
+# ledger file. That's a feature, not a bug, for a private repo the user
+# controls: users who don't want secrets in git can gitignore it themselves.
+# Override with BEANSYNC_SECRETS_DIR if you want secrets to live elsewhere.
 SECRETS_DIR = Path(os.environ.get("BEANSYNC_SECRETS_DIR", "."))
 SECRETS_FILE = SECRETS_DIR / "secrets.yaml"
 

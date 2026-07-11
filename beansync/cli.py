@@ -153,6 +153,16 @@ def ingest(
     since: str | None = typer.Option(None, "--since", help="Fetch data from this date onwards, e.g. 2026-06-18 (overrides saved state)"),
 ) -> None:
     """Fetch new data and parse it for each source."""
+    from beansync.scheduler import ingest_lock
+    try:
+        with ingest_lock():
+            _run_ingest(names, headed, since)
+    except RuntimeError as e:
+        logger.error(str(e))
+        raise typer.Exit(1)
+
+
+def _run_ingest(names: list[str] | None, headed: bool, since: str | None) -> None:
     import datetime as dt
     from beansync import llm, sync_email, sync_cua
 

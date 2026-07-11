@@ -214,18 +214,22 @@ class StagehandSource:
 AnySource = Union[EmailSource, InboxSource, CUASource, ImageSource, StagehandSource]
 
 
+_DEFAULT_INGEST_CRON = "0 0 * * *"
+
+
 @dataclass
 class Config:
     sources: list[AnySource] = field(default_factory=list)
+    ingest_cron: str = _DEFAULT_INGEST_CRON  # empty string disables scheduling
 
 
 def _config_representer(dumper: yaml.Dumper, c: Config) -> yaml.MappingNode:
-    return dumper.represent_mapping("!Config", {"sources": c.sources})
+    return dumper.represent_mapping("!Config", {"sources": c.sources, "ingest_cron": c.ingest_cron})
 
 
 def _config_constructor(loader: yaml.Loader, node: yaml.MappingNode) -> Config:
     d = loader.construct_mapping(node, deep=True)
-    return Config(sources=d.get("sources", []))
+    return Config(sources=d.get("sources", []), ingest_cron=d.get("ingest_cron", _DEFAULT_INGEST_CRON))
 
 
 _Loader.add_constructor("!Config", _config_constructor)
@@ -266,7 +270,7 @@ def load_config() -> Config:
             sources.append(s)  # type: ignore[arg-type]
         else:
             sources.append(_source_from_dict(s))
-    return Config(sources=sources)
+    return Config(sources=sources, ingest_cron=raw.get("ingest_cron", _DEFAULT_INGEST_CRON))
 
 
 def save_config(config: Config) -> None:

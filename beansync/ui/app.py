@@ -108,6 +108,10 @@ nicegui_app.add_middleware(_NotFoundLoggerMiddleware)
 nicegui_app.add_middleware(_HAIngressMiddleware)
 nicegui_app.add_middleware(_NiceGUIStaticCORSMiddleware)
 
+from beansync import scheduler
+
+nicegui_app.on_startup(scheduler.start)
+
 
 @nicegui_app.get("/_debug/ingress")
 async def debug_ingress(request: Request) -> dict:

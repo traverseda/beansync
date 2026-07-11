@@ -13,12 +13,17 @@ ANTHROPIC_KEY=$(jq -r '.anthropic_api_key // ""'  "${OPTIONS}" 2>/dev/null || tr
 [ -n "${OPENROUTER_KEY}" ] && export OPENROUTER_API_KEY="${OPENROUTER_KEY}"
 [ -n "${ANTHROPIC_KEY}" ]  && export ANTHROPIC_API_KEY="${ANTHROPIC_KEY}"
 
-# Secrets and the git SSH key both default to living relative to the ledger
-# dir / user home (see beansync/secrets.py, beansync/git_ops.py) — those
-# defaults are for local/desktop use. In the container, force them onto /data
-# instead: it's the one persistent location that isn't the ledger dir itself
-# (a git clone target) and isn't browsable through HA's file-explorer add-ons.
-export BEANSYNC_SECRETS_DIR=/data
+# secrets.yaml intentionally defaults to the ledger dir (see beansync/secrets.py)
+# and is NOT redirected to /data here: if the ledger dir is a git clone, the
+# whole point is that secrets.yaml travels with `git clone`/`pull` like any
+# other ledger file. Users who don't want secrets in git can gitignore it
+# themselves — that's a per-repo choice, not something the add-on should force.
+#
+# The SSH key is different: it's what *authenticates* to the git remote, so
+# it can never live inside the repo it's used to access, regardless of the
+# secrets-in-git choice above. /data is the one persistent location that
+# isn't the ledger dir itself and isn't browsable through HA's file-explorer
+# add-ons.
 export BEANSYNC_SSH_DIR=/data/ssh
 export NICEGUI_STORAGE_PATH=/data/nicegui
 

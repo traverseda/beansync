@@ -171,11 +171,15 @@ def page() -> None:
         yaml_editor: list[ui.codemirror] = []
         secrets_container: list[ui.column] = []
         git_container: list[ui.column] = []
+        schedule_container: list[ui.column] = []
+        schedule_input: list[ui.input] = []
 
         # Per-source input refs: list of {field_name: widget}
         source_inputs: list[dict] = []
 
         def _capture() -> None:
+            if schedule_input:
+                config_ref[0].ingest_cron = schedule_input[0].value.strip()
             for i, inp in enumerate(source_inputs):
                 src = config_ref[0].sources[i]
                 src.name = inp["name"].value.strip()
@@ -366,6 +370,45 @@ def page() -> None:
 
                         ui.button("Clone", icon="download", on_click=_do_clone).props("color=primary dense")
 
+        def _render_schedule() -> None:
+            import datetime as dt
+            from croniter import croniter
+
+            if not schedule_container:
+                return
+            schedule_container[0].clear()
+            with schedule_container[0]:
+                ui.label(
+                    "Runs a full ingest (all sources) automatically on this schedule. "
+                    "Standard cron syntax: minute hour day month weekday — "
+                    "e.g. \"0 0 * * *\" = daily at midnight. Leave blank to disable."
+                ).classes("text-xs text-gray-400")
+
+                next_run_label = ui.label().classes("text-sm")
+
+                def _update_preview(value: str) -> None:
+                    value = value.strip()
+                    if not value:
+                        next_run_label.set_text("Scheduled ingest is disabled.")
+                        next_run_label.classes(remove="text-red-400", add="text-gray-400")
+                    elif croniter.is_valid(value):
+                        nxt = croniter(value, dt.datetime.now()).get_next(dt.datetime)
+                        next_run_label.set_text(f"Next run: {nxt.strftime('%Y-%m-%d %H:%M')}")
+                        next_run_label.classes(remove="text-red-400", add="text-gray-400")
+                    else:
+                        next_run_label.set_text("Invalid cron expression.")
+                        next_run_label.classes(remove="text-gray-400", add="text-red-400")
+
+                inp = (
+                    ui.input("Cron schedule", value=config_ref[0].ingest_cron,
+                             on_change=lambda e: _update_preview(e.value))
+                    .props("dense clearable")
+                    .classes("w-64 font-mono")
+                )
+                schedule_input.clear()
+                schedule_input.append(inp)
+                _update_preview(config_ref[0].ingest_cron)
+
         def _render_gui() -> None:
             source_inputs.clear()
             gui_container[0].clear()
@@ -528,6 +571,7 @@ def page() -> None:
                 try:
                     config_ref[0] = _yaml_to_config(yaml_editor[0].value)
                     _render_gui()
+                    _render_schedule()
                 except Exception as e:
                     ui.notify(f"YAML parse error: {e}", type="negative")
 
@@ -565,6 +609,10 @@ def page() -> None:
                 gc = ui.column().classes("w-full gap-2 p-2")
                 git_container.append(gc)
 
+            with ui.expansion("Schedule", icon="schedule").classes("w-full border border-gray-700 rounded"):
+                sched = ui.column().classes("w-full gap-2 p-2")
+                schedule_container.append(sched)
+
             col = ui.column().classes("w-full gap-3")
             gui_container.append(col)
 
@@ -596,4 +644,5 @@ def page() -> None:
 
         _render_secrets()
         _render_git()
+        _render_schedule()
         _render_gui()
