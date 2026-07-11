@@ -36,6 +36,12 @@ WORKDIR /app
 COPY . .
 RUN UV_PROJECT_ENVIRONMENT=/opt/venv uv sync --locked --no-dev --no-editable --no-cache
 
+# CUA sources (beansync/sync_cua.py) drive a real Firefox via Playwright —
+# the `playwright` Python package only ships the driver, not a browser
+# binary, so it has to be fetched separately. --with-deps also pulls in the
+# system shared libs Firefox needs (distinct from the Chromium ones above).
+RUN playwright install --with-deps firefox
+
 COPY addon/run.sh /run.sh
 RUN chmod +x /run.sh
 
