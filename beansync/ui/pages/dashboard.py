@@ -143,18 +143,19 @@ def _sankey_figure(
     return fig
 
 
-def _pie_figure(
+def _sunburst_figure(
     since: datetime.date,
     until: datetime.date,
     account_filter: list[str],
 ):
-    """Pie chart of outgoing money by level-2 destination account."""
+    """Sunburst chart of outgoing money across the full expense account hierarchy."""
     import plotly.graph_objects as go
     from beancount import loader
     from beancount.core import data as bdata
 
     entries, _errors, _options = loader.load_file(str(LEDGER))
 
+    # Direct totals per exact destination account (whatever depth the posting used).
     totals: dict[str, Decimal] = defaultdict(Decimal)
 
     for entry in entries:
@@ -176,31 +177,45 @@ def _pie_figure(
                 continue
             if account_filter and dst.account not in account_filter:
                 continue
-            parts = dst.account.split(":")
-            # Group at level-2 (e.g., Expenses:Food)
-            key = ":".join(parts[:2])
-            totals[key] += dst.units.number
+            totals[dst.account] += dst.units.number
 
     if not totals:
         return go.Figure()
 
-    labels = [_sankey_label(k) for k in totals]
-    values = [round(float(v), 2) for v in totals.values()]
+    # Fill in ancestor nodes (level-2 up to each account's direct parent) with a
+    # 0 default so the hierarchy chain is unbroken; branchvalues="remainder"
+    # below means Plotly sums each node's own value plus its children's for
+    # the displayed ring size, so ancestors without direct postings still show
+    # the right total.
+    nodes: dict[str, Decimal] = defaultdict(Decimal)
+    for account, amount in totals.items():
+        nodes[account] += amount
+        parts = account.split(":")
+        for i in range(2, len(parts)):
+            nodes.setdefault(":".join(parts[:i]), Decimal(0))
 
-    fig = go.Figure(go.Pie(
+    ids = list(nodes.keys())
+    parents = [
+        ":".join(acc.split(":")[:-1]) if len(acc.split(":")) > 2 else ""
+        for acc in ids
+    ]
+    labels = [_sankey_label(acc) for acc in ids]
+    values = [round(float(v), 2) for v in nodes.values()]
+
+    fig = go.Figure(go.Sunburst(
+        ids=ids,
         labels=labels,
+        parents=parents,
         values=values,
-        customdata=list(totals.keys()),
-        hovertemplate="%{customdata}<br>CAD %{value:,.2f} (%{percent})<extra></extra>",
-        texttemplate="%{label}<br>$%{value:,.0f}<br>%{percent}",
-        textinfo="text",
+        branchvalues="remainder",
+        customdata=ids,
+        hovertemplate="%{customdata}<br>CAD %{value:,.2f}<extra></extra>",
     ))
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font=dict(color="#e0e0e0", size=12),
         margin=dict(l=5, r=5, t=30, b=5),
-        showlegend=False,
     )
     return fig
 
@@ -453,7 +468,7 @@ def page() -> None:
 
             with ui.card().classes("w-80"):
                 ui.label("Spending Breakdown").classes("text-lg font-semibold mb-2")
-                pie_chart = ui.plotly(go.Figure()).classes("w-full").style("height: 560px")
+                sunburst_chart = ui.plotly(go.Figure()).classes("w-full").style("height: 560px")
 
         # Transactions
         with ui.card().classes("w-full"):
@@ -479,10 +494,10 @@ def page() -> None:
                 if n else "No CAD transactions in this period."
             )
 
-        def refresh_pie() -> None:
+        def refresh_sunburst() -> None:
             since, until, accts = _get_filter()
-            pie_chart.figure = _pie_figure(since, until, accts)
-            pie_chart.update()
+            sunburst_chart.figure = _sunburst_figure(since, until, accts)
+            sunburst_chart.update()
 
         def refresh_transactions() -> None:
             tx_rows.clear()
@@ -562,7 +577,7 @@ def page() -> None:
         def refresh_all() -> None:
             refresh_net_worth()
             refresh_sankey()
-            refresh_pie()
+            refresh_sunburst()
             refresh_transactions()
 
         account_select.on("update:model-value", lambda _: refresh_all())
