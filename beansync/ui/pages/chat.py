@@ -13,6 +13,8 @@ from beansync.config import LEDGER, MODEL, load_accounts
 from beansync.llm import (
     Posting,
     Transaction,
+    annotate_accounts,
+    list_accounts,
     query_ledger,
     tavily_search,
     transaction_to_beancount,
@@ -34,6 +36,12 @@ Operating currency is CAD.
 Use query_ledger to look up existing transactions before editing them — \
 you need the filename and lineno from entry_meta('filename') and entry_meta('lineno').
 
+Prefer an existing account from the Accounts list below. If nothing fits, call list_accounts \
+first to check whether a matching account already exists elsewhere in the ledger before typing \
+a new one. Never invent a new top-level category, and never create a per-person account (e.g. \
+Expenses:Loans:SomeName) — for a payment to/from a specific person, use a single shared account \
+such as Expenses:Loans or Assets:Receivable and put the person's name in the narration instead.
+
 Do not use emoji in your responses.
 
 Accounts:
@@ -41,6 +49,24 @@ Accounts:
 
 
 _TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "list_accounts",
+            "description": (
+                "List accounts currently in use in the ledger, optionally filtered by a case-insensitive "
+                "regex on the account name. The Accounts list in the system prompt only shows the curated "
+                "core taxonomy — call this to find or check an account that isn't in that list."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "search": {"type": "string", "description": "Regex to filter account names; omit to list everything"},
+                },
+                "required": [],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -410,7 +436,7 @@ async def _llm_loop_stream(
         if source_name not in sources:
             return f"Unknown source: {source_name!r}. Available: {', '.join(sources)}"
         source = sources[source_name]
-        accounts = load_accounts()
+        accounts = annotate_accounts(load_accounts())
         null_instr = llm.NULL_INSTRUCTION if source.nullable else llm.NO_NULL_INSTRUCTION
         enrichment_note = llm.ENRICHMENT_NOTE if source.enrichment else ""
 
@@ -477,6 +503,7 @@ async def _llm_loop_stream(
 
     handlers: dict[str, Callable] = {
         "query_ledger": query_ledger,
+        "list_accounts": list_accounts,
         "create_transaction": _create_transaction,
         "edit_transaction": _edit_transaction,
         "set_filter": _set_filter,
@@ -572,7 +599,7 @@ def chat_panel(
     """Render the chat panel. Call inside a NiceGUI container (e.g. right_drawer)."""
     system_prompt = _SYSTEM_PROMPT_TEMPLATE.format(
         date=datetime.date.today().isoformat(),
-        accounts=load_accounts(),
+        accounts=annotate_accounts(load_accounts()),
     )
     stored = nicegui_app.storage.general
     if "chat_messages" not in stored:

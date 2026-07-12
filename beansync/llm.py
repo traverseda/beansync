@@ -65,6 +65,52 @@ def query_ledger(query: str) -> str:
     return output or "(no results)"
 
 
+def _all_ledger_accounts() -> set[str]:
+    """Every account actually in use in the ledger (open directives, explicit or auto-opened)."""
+    try:
+        result = subprocess.run(
+            [_BEAN_QUERY, "-f", "csv", str(LEDGER), "SELECT DISTINCT account"],
+            capture_output=True, text=True, timeout=15,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return set()
+    lines = [ln.strip() for ln in result.stdout.splitlines() if ln.strip()]
+    if lines and lines[0].lower() == "account":
+        lines = lines[1:]
+    return set(lines)
+
+
+def list_accounts(search: str = "") -> str:
+    """List accounts currently in use in the ledger, optionally filtered by a regex."""
+    accounts = sorted(_all_ledger_accounts())
+    if search:
+        try:
+            pattern = re.compile(search, re.IGNORECASE)
+        except re.error as e:
+            return f"Invalid regex pattern: {e}"
+        accounts = [a for a in accounts if pattern.search(a)]
+    return "\n".join(accounts) if accounts else "(no matching accounts)"
+
+
+def annotate_accounts(curated: str) -> str:
+    """Append a count of in-use accounts not covered by the curated list.
+
+    Deliberately doesn't list them by name: a live full account dump would make the
+    prompt balloon and drift over years (old telcos, closed loans, etc.) baked into
+    every request. The count plus list_accounts is enough for the model to check
+    before inventing something new, without permanently listing every account ever used.
+    """
+    curated_names = set(re.findall(r"\bopen\s+(\S+)", curated))
+    extra = len(_all_ledger_accounts() - curated_names)
+    if not extra:
+        return curated
+    return (
+        f"{curated}\n\n"
+        f"(and {extra} more account(s) currently in use in the ledger, not listed above — "
+        f"call list_accounts to search for one by name before creating a new account)"
+    )
+
+
 def ask_user(question: str, options: list[str] | None = None) -> str:
     if UNATTENDED.get():
         raise QuestionDeferred(question, options)
@@ -136,6 +182,25 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "list_accounts",
+            "description": (
+                "List accounts currently in use in the ledger, optionally filtered by a case-insensitive "
+                "regex on the account name (e.g. 'Loans' or 'Wendy'). The Accounts list in this prompt only "
+                "shows the curated core taxonomy — call this before creating any account not already in that "
+                "list, to check whether it (or something close to it) already exists."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "search": {"type": "string", "description": "Regex to filter account names; omit to list everything"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "query_ledger",
             "description": (
                 "Run a BQL (beancount query language) query against the ledger. "
@@ -198,6 +263,7 @@ TOOL_HANDLERS: dict[str, Callable[..., str]] = {
     "save_note": save_note,
     "delete_note": delete_note,
     "query_ledger": query_ledger,
+    "list_accounts": list_accounts,
     "ask_user": ask_user,
 }
 
@@ -259,7 +325,7 @@ Rules:
 {enrichment_note}- This is personal household spending, not business accounting
 - payee is the merchant name only (e.g. "Steam", "Canada Computers"), not the email subject
 - narration is what was bought (e.g. "game purchase", "electronics"), not boilerplate like "Pending charge"
-- account should follow the taxonomy in the Accounts list below; you may create sub-accounts or new accounts not in the list when the situation clearly calls for it — the list is a guide, not a hard constraint
+- account should follow the taxonomy in the Accounts list below. Prefer an existing account. If nothing fits, you may add a sub-account under an existing top-level category (e.g. Expenses:Entertainment:NewService) — call list_accounts first to check whether it (or something close) already exists. Never invent a new top-level category, and never create a per-person account (e.g. Expenses:Loans:SomeName) — for a payment to/from a specific person (loan, reimbursement, e-transfer), use a single shared account such as Expenses:Loans or Assets:Receivable and put the person's name in the narration instead; ask_user if you're unsure which shared account applies
 - for recurring subscription services (streaming, software, memberships), use a dedicated sub-account under the appropriate category, e.g. Expenses:Entertainment:Spotify, Expenses:BillsAndUtilities:Youtube — not the bare parent account
 - certainty is your confidence (0-100) in the account classification; if certainty would be below 80, call ask_user — include merchant name, amount, and your uncertainty reason in the question, and provide account options formatted as "Account — why it fits"
 - amounts must balance to zero; credit card charges are: expense positive, liability negative (e.g. Expenses:X +38.69, Liabilities:CreditCard:Collabria -38.69)
@@ -481,7 +547,7 @@ Rules:
 - narration is a brief description of what was purchased
 - Use the total/grand-total amount from the receipt, not subtotals
 - If the payment method is visible (e.g. Visa ending 1234), use the matching liability account; otherwise default to Assets:Checking:CUA
-- account should follow the taxonomy in the Accounts list below
+- account should follow the taxonomy in the Accounts list below. Prefer an existing account; call list_accounts before creating a sub-account not already listed. Never invent a new top-level category or a per-person account
 - certainty is your confidence (0-100); if below 80, call ask_user
 - amounts must balance to zero
 - SPLIT TRANSACTIONS: if the receipt shows items from clearly distinct categories (e.g. groceries and household supplies at a superstore), use multiple expense postings; call ask_user to clarify the split if line-item details are unclear

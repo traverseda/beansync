@@ -177,7 +177,7 @@ def _run_ingest(names: list[str] | None, headed: bool, since: str | None) -> Non
     all_sources = load_sources()
     write_primary_includes(all_sources)
     selected = _filter(all_sources, names)
-    accounts = load_accounts()
+    accounts = llm.annotate_accounts(load_accounts())
     all_source_dirs = [s.source_dir for s in all_sources]
 
     i = 0
@@ -239,7 +239,7 @@ def parse(
 
     all_sources = load_sources()
     selected = _filter(all_sources, names)
-    accounts = load_accounts()
+    accounts = llm.annotate_accounts(load_accounts())
     all_source_dirs = [s.source_dir for s in all_sources]
 
     for source in selected:
