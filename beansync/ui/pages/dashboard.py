@@ -143,6 +143,37 @@ def _sankey_figure(
     return fig
 
 
+# Dark-mode categorical hues (fixed order, CVD-validated) — root expense
+# categories each get one, deterministically by name so a category keeps its
+# color across different date/account filters.
+_ROOT_HUES = ["#3987e5", "#199e70", "#c98500", "#008300", "#9085e9", "#e66767", "#d55181", "#d95926"]
+# Lightness offsets used to shade a root's children into distinguishable
+# segments while staying in the same hue family as their parent ring.
+_CHILD_LIGHTNESS_STEPS = [-0.12, 0.12, -0.24, 0.22, -0.05, 0.17]
+
+
+def _account_color(account: str, root: str, sibling_index: int = 0) -> str:
+    """Pick a hex color for a sunburst node.
+
+    Roots get a fixed categorical hue by name (stable across filters).
+    Non-root nodes shade that same hue by their position among sibling
+    accounts under the same parent, so siblings never collide.
+    """
+    import colorsys
+    import zlib
+
+    root_hex = _ROOT_HUES[zlib.crc32(root.encode()) % len(_ROOT_HUES)]
+    if account == root:
+        return root_hex
+
+    r, g, b = (int(root_hex[i:i + 2], 16) / 255 for i in (1, 3, 5))
+    h, l, s = colorsys.rgb_to_hls(r, g, b)
+    offset = _CHILD_LIGHTNESS_STEPS[sibling_index % len(_CHILD_LIGHTNESS_STEPS)]
+    l = min(0.82, max(0.28, l + offset))
+    r, g, b = colorsys.hls_to_rgb(h, l, s)
+    return "#{:02x}{:02x}{:02x}".format(round(r * 255), round(g * 255), round(b * 255))
+
+
 def _sunburst_figure(
     since: datetime.date,
     until: datetime.date,
@@ -202,6 +233,22 @@ def _sunburst_figure(
     labels = [_sankey_label(acc) for acc in ids]
     values = [round(float(v), 2) for v in nodes.values()]
 
+    # Rank each non-root node among its siblings (children of the same parent)
+    # so _account_color can give siblings distinct shades instead of colliding.
+    siblings: dict[str, list[str]] = defaultdict(list)
+    for acc, parent in zip(ids, parents):
+        if parent:
+            siblings[parent].append(acc)
+    sibling_index: dict[str, int] = {}
+    for group in siblings.values():
+        for i, acc in enumerate(sorted(group)):
+            sibling_index[acc] = i
+
+    colors = [
+        _account_color(acc, ":".join(acc.split(":")[:2]), sibling_index.get(acc, 0))
+        for acc in ids
+    ]
+
     fig = go.Figure(go.Sunburst(
         ids=ids,
         labels=labels,
@@ -209,6 +256,7 @@ def _sunburst_figure(
         values=values,
         branchvalues="remainder",
         customdata=ids,
+        marker=dict(colors=colors),
         hovertemplate="%{customdata}<br>CAD %{value:,.2f}<extra></extra>",
     ))
     fig.update_layout(
