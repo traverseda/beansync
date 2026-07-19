@@ -1,6 +1,11 @@
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
+# Stdout/stderr are block-buffered when piped (always true under Docker), so
+# a hard kill (e.g. OOM) can drop everything sitting in the buffer before it
+# ever reaches `docker logs`. Unbuffered output means a crash still leaves
+# whatever was logged right before it.
+ENV PYTHONUNBUFFERED=1
 
 # System packages: Python, Node.js source, Xvfb, Chromium, git, jq
 RUN apt-get update && apt-get install -y --no-install-recommends \

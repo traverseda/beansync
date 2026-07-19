@@ -10,8 +10,10 @@ LEDGER_DIR=$(jq -r '.ledger_dir // "/config/beansync"' "${OPTIONS}" 2>/dev/null 
 # beansync's secret resolver also checks SECRET_<UPPER_NAME> for any !secret refs in config.yaml.
 OPENROUTER_KEY=$(jq -r '.openrouter_api_key // ""' "${OPTIONS}" 2>/dev/null || true)
 ANTHROPIC_KEY=$(jq -r '.anthropic_api_key // ""'  "${OPTIONS}" 2>/dev/null || true)
+TAVILY_KEY=$(jq -r '.tavily_api_key // ""'  "${OPTIONS}" 2>/dev/null || true)
 [ -n "${OPENROUTER_KEY}" ] && export OPENROUTER_API_KEY="${OPENROUTER_KEY}"
 [ -n "${ANTHROPIC_KEY}" ]  && export ANTHROPIC_API_KEY="${ANTHROPIC_KEY}"
+[ -n "${TAVILY_KEY}" ]     && export TAVILY_API_KEY="${TAVILY_KEY}"
 
 # secrets.yaml intentionally defaults to the ledger dir (see beansync/secrets.py)
 # and is NOT redirected to /data here: if the ledger dir is a git clone, the
@@ -26,6 +28,9 @@ ANTHROPIC_KEY=$(jq -r '.anthropic_api_key // ""'  "${OPTIONS}" 2>/dev/null || tr
 # add-ons.
 export BEANSYNC_SSH_DIR=/data/ssh
 export NICEGUI_STORAGE_PATH=/data/nicegui
+# /data persists across container restarts, unlike the container's stdout —
+# a crash-and-restart (e.g. OOM kill) still leaves the log file behind.
+export BEANSYNC_LOG_DIR=/data/logs
 
 # Start Xvfb so headed-mode browser automation works inside the container.
 Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset &

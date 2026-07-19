@@ -60,7 +60,12 @@ def fetch_batch(sources: list[CUASource], headed: bool = False, since: date | No
 
     since overrides the per-source 'days' config.
     """
-    from playwright.sync_api import sync_playwright, Page, TimeoutError as PlaywrightTimeout  # type: ignore[import-not-found]
+    from playwright.sync_api import (  # type: ignore[import-not-found]
+        sync_playwright,
+        Page,
+        TimeoutError as PlaywrightTimeout,
+        Error as PlaywrightError,
+    )
     from playwright_stealth.stealth import Stealth  # type: ignore[import-not-found]
 
     def login(page: Page, user: str, password: str) -> None:
@@ -122,7 +127,16 @@ def fetch_batch(sources: list[CUASource], headed: bool = False, since: date | No
                     logger.info("{}: {} new, {} already existed", source.name, new, skipped)
                 except PlaywrightTimeout as exc:
                     logger.error("Timed out on {}: {}", source.name, exc)
+                except PlaywrightError:
+                    # Crashed page/target, unexpected markup, stealth-plugin
+                    # incompatibility, etc. Previously only PlaywrightTimeout
+                    # was caught, so anything else here would propagate out
+                    # uncaught and, when run unattended, lose its traceback
+                    # entirely (see beansync/scheduler.py's _run_ingest_once).
+                    logger.exception("Browser error while fetching {}", source.name)
         except PlaywrightTimeout as exc:
             logger.error("Timed out during login: {}", exc)
+        except PlaywrightError:
+            logger.exception("Browser error during login")
         finally:
             browser.close()
