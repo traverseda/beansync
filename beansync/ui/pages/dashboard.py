@@ -17,6 +17,7 @@ from urllib.parse import quote
 
 from beansync.config import LEDGER, load_sources
 from beansync.ui.transaction_editor import new_transaction_dialog, transaction_editor_dialog
+from beansync.ui.urls import app_url
 
 
 _PERIODS = {
@@ -608,7 +609,7 @@ def page() -> None:
                                                 ui.button(
                                                     icon="receipt",
                                                     on_click=lambda rs=raw_source: ui.run_javascript(
-                                                        f"window.open('/api/print-packet?path={quote(rs)}', '_blank')"
+                                                        f"window.open('{app_url(f'/api/print-packet?path={quote(rs)}')}', '_blank')"
                                                     ),
                                                 ).props("flat dense").classes("text-xs").tooltip("View")
                                                 ui.button(
@@ -616,7 +617,7 @@ def page() -> None:
                                                     on_click=lambda rs=raw_source: ui.run_javascript(
                                                         f"(function(){{var f=document.createElement('iframe');"
                                                         f"f.style.display='none';"
-                                                        f"f.src='/api/print-packet?path={quote(rs)}';"
+                                                        f"f.src='{app_url(f'/api/print-packet?path={quote(rs)}')}';"
                                                         f"f.onload=function(){{f.contentWindow.print();}};"
                                                         f"document.body.appendChild(f);}})();"
                                                     ),

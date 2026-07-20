@@ -8,12 +8,13 @@ from nicegui import ui
 
 from beansync.config import load_sources
 from beansync.llm import find_enrichment, html_to_text
+from beansync.ui.urls import app_url
 
 
 def _display_source(path: Path) -> None:
     raw = path.read_text(encoding="utf-8", errors="replace")
     if path.suffix == ".html":
-        url = f"/api/source?path={quote(str(path))}"
+        url = app_url(f"/api/source?path={quote(str(path))}")
         ui.element("iframe").props(f'src="{url}" sandbox="allow-same-origin"').style(
             "width:100%;height:480px;border:none;background:white;"
         )
@@ -40,7 +41,7 @@ def source_viewer_dialog(raw_source: str) -> None:
     enrichment_dirs = [d for d in all_source_dirs if not source_path.is_relative_to(d)]
 
     with ui.dialog().props("maximized") as dialog, ui.card().classes("w-full h-full rounded-none overflow-hidden"):
-        packet_url = f"/api/print-packet?path={quote(raw_source)}"
+        packet_url = app_url(f"/api/print-packet?path={quote(raw_source)}")
 
         with ui.row().classes("w-full justify-between items-start mb-1"):
             with ui.column().classes("gap-0 min-w-0"):
