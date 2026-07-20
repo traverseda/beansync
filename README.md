@@ -171,6 +171,41 @@ bean-sync serve
 
 Opens a web interface at `http://127.0.0.1:8765` with a dashboard (Sankey money-flow chart, transaction table), an ingest runner with live terminal output, a config editor, and a merchant notes editor.
 
+## MCP servers
+
+`bean-sync serve` also exposes two [MCP](https://modelcontextprotocol.io) endpoints over Streamable HTTP, so other agents can use bean-sync. Neither adds authentication — they sit behind whatever fronts the web UI (HA ingress, or your own reverse proxy). Don't expose them to the open internet unauthenticated.
+
+### `/mcp/agent/mcp` — bean-sync as a sub-agent
+
+One tool, `ask_beansync(prompt)`. It runs a full turn of the same finance assistant behind the chat panel — querying the ledger, calling tools, editing transactions — and returns its answer as prose.
+
+Calls are independent: the assistant keeps nothing between them, so each prompt has to carry its own context.
+
+```json
+{"mcpServers": {"beansync": {"url": "http://127.0.0.1:8765/mcp/agent/mcp"}}}
+```
+
+### `/mcp/tools/mcp` — the raw tools
+
+Exposes bean-sync's individual tools (`query_ledger`, `create_transaction`, `list_sources`, …) for an agent that would rather drive the ledger itself.
+
+Which tools a connection sees is set by its query string:
+
+| Query | Result |
+|---|---|
+| *(none)* | all tools |
+| `?include=query_ledger,list_accounts` | only those two |
+| `?exclude=save_config,run_ingest` | everything else |
+| `?include=@read&exclude=tavily_search` | read-only tools, minus web search |
+
+`include` is applied first, then `exclude` is subtracted. Alongside tool names you can use the groups `@all`, `@read`, and `@write` — `@write` being the six tools that modify the ledger, rewrite `config.yaml`, or fetch from the network (`create_transaction`, `edit_transaction`, `save_config`, `run_ingest`, `save_note`, `delete_note`).
+
+Filtered-out tools are not merely hidden from `tools/list`; calling one by name is refused.
+
+```json
+{"mcpServers": {"beansync": {"url": "http://127.0.0.1:8765/mcp/tools/mcp?exclude=@write"}}}
+```
+
 ## Home Assistant add-on
 
 Beansync can run as a [Home Assistant](https://www.home-assistant.io/) add-on, accessible via the HA sidebar.

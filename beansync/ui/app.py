@@ -112,6 +112,11 @@ from beansync import scheduler
 
 nicegui_app.on_startup(scheduler.start)
 
+# Mounted before the NiceGUI page routes so /mcp/* never falls through to the UI.
+from beansync import mcp_server
+
+mcp_server.mount(nicegui_app)
+
 
 @nicegui_app.get("/_debug/ingress")
 async def debug_ingress(request: Request) -> dict:
