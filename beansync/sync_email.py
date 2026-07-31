@@ -15,6 +15,13 @@ from beansync.config import AnySource, EmailSource
 DEFAULT_IMAP_HOST = "imap.gmail.com"
 STATE_FILE = Path("sources/state/downloads.yaml")
 
+# last_sync is rewound by this much when saved, so a message that lands with a
+# back-dated INTERNALDATE (delayed delivery, a provider re-filing a message)
+# still falls inside the next run's search window. Re-scanning a couple of days
+# is nearly free: already-downloaded uids are skipped by filename and already
+# classified ones by non_receipt_uids, so nothing is re-sent to the LLM.
+SYNC_OVERLAP_DAYS = 2
+
 
 def load_state() -> dict:
     if STATE_FILE.exists():
@@ -25,6 +32,41 @@ def load_state() -> dict:
 def save_state(state: dict) -> None:
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(yaml.dump(state, default_flow_style=False))
+
+
+def _load_non_receipts(source_state: dict) -> dict[str, str]:
+    """uid -> date it was seen. Older state files stored a bare list of uids."""
+    seen = source_state.get("non_receipt_uids") or {}
+    if isinstance(seen, list):
+        return {str(uid): "" for uid in seen}
+    return {str(uid): str(day) for uid, day in seen.items()}
+
+
+def _mark_non_receipt(state: dict, source_state: dict, seen: dict[str, str], uid: str, day: str) -> None:
+    seen[uid] = day
+    source_state["non_receipt_uids"] = dict(sorted(seen.items()))
+    save_state(state)
+
+
+def _advance_last_sync(source_state: dict) -> None:
+    horizon = datetime.date.today() - datetime.timedelta(days=SYNC_OVERLAP_DAYS)
+    source_state["last_sync"] = horizon.isoformat()
+
+
+def reset_state(source_name: str, since: datetime.date) -> None:
+    """Rewind a source's fetch state so the next run re-examines everything from `since`.
+
+    Drops the "already decided this isn't a receipt" record for anything on or
+    after `since` (and anything with no recorded date, which predates that
+    bookkeeping) so those messages are genuinely re-checked rather than skipped.
+    """
+    state = load_state()
+    source_state = state.setdefault(source_name, {})
+    source_state["last_sync"] = since.isoformat()
+    kept = {uid: day for uid, day in _load_non_receipts(source_state).items() if day and day < since.isoformat()}
+    if "non_receipt_uids" in source_state:
+        source_state["non_receipt_uids"] = kept
+    save_state(state)
 
 
 
@@ -93,6 +135,14 @@ def _inject_email_headers(html: bytes, msg: email.message.Message) -> bytes:
         pos = body_match.end()
         return html[:pos] + header_block + html[pos:]
     return header_block + html
+
+
+def _save_raw(dest: Path, filename: str, html: bytes, msg: email.message.Message) -> Path:
+    """Write an email body to disk, creating its quarter directory. Returns the path."""
+    dest.mkdir(parents=True, exist_ok=True)
+    path = dest / filename
+    path.write_bytes(_inject_email_headers(html, msg))
+    return path
 
 
 def extract_html(msg: email.message.Message) -> bytes | None:
@@ -196,15 +246,14 @@ def fetch(source: EmailSource, since: datetime.date | None = None) -> int:
                     continue
                 dt = parse_date(msg)
                 dest = quarter_subdir(source.source_dir, dt)
-                dest.mkdir(parents=True, exist_ok=True)
                 filename = f"{dt.strftime('%Y-%m-%d')}_{safe_filename(decode_subject(msg))}_uid{uid}.html"
-                (dest / filename).write_bytes(_inject_email_headers(html, msg))
+                _save_raw(dest, filename, html, msg)
                 logger.info("Saved {}/{}", dest.name, filename)
                 downloaded += 1
     finally:
         imap.logout()
 
-    state.setdefault(source.name, {})["last_sync"] = datetime.date.today().isoformat()
+    _advance_last_sync(state.setdefault(source.name, {}))
     save_state(state)
     logger.info("{} new email(s) downloaded for source '{}'", downloaded, source.name)
     return downloaded
@@ -219,6 +268,12 @@ def ingest_receipt(source: AnySource, system_prompt: str, all_source_dirs: list[
     excluded_senders: email addresses handled by dedicated sources — skipped at search time.
     Tracks non-receipt UIDs in the state file to avoid re-processing.
     Returns number of receipts found.
+
+    Any message this run cannot classify — the LLM asked a question, or parsing
+    failed outright — has its raw body written to source_dir *without* a .bean
+    sidecar, so it survives as an on-disk file that a later parse pass retries.
+    Nothing that was downloaded is ever discarded on the strength of an
+    unfinished decision.
     """
     from beansync.llm import html_to_text, parse_text
     from beansync.questions import QuestionDeferred, answered_context_for, clear_answered_for, queue_question
@@ -229,7 +284,7 @@ def ingest_receipt(source: AnySource, system_prompt: str, all_source_dirs: list[
     if since is None:
         since_str: str | None = source_state.get("last_sync")
         since = datetime.date.fromisoformat(since_str) if since_str else datetime.date.today()
-    non_receipt_uids: set[str] = set(source_state.get("non_receipt_uids", []))
+    non_receipt_uids = _load_non_receipts(source_state)
 
     source.source_dir.mkdir(parents=True, exist_ok=True)
 
@@ -256,7 +311,9 @@ def ingest_receipt(source: AnySource, system_prompt: str, all_source_dirs: list[
         logger.info("Found {} email(s) to check", len(uid_pairs))
 
         for msg_id, uid in uid_pairs:
-            # Already saved as a receipt
+            # Already downloaded — either classified as a receipt, or kept for a
+            # retry by the parse pass that follows this fetch. Either way it is
+            # on disk, so there is nothing left to do over IMAP for it.
             if list(source.source_dir.rglob(f"*_uid{uid}.html")):
                 continue
             # Already decided not a receipt
@@ -265,7 +322,7 @@ def ingest_receipt(source: AnySource, system_prompt: str, all_source_dirs: list[
 
             html, msg = _download_html(imap, msg_id)
             if html is None or msg is None:
-                non_receipt_uids.add(uid)
+                _mark_non_receipt(state, source_state, non_receipt_uids, uid, "")
                 continue
 
             dt = parse_date(msg)
@@ -284,28 +341,39 @@ def ingest_receipt(source: AnySource, system_prompt: str, all_source_dirs: list[
                     extra_context=answered_context_for(label),
                 )
             except QuestionDeferred as exc:
-                # Leave the uid out of non_receipt_uids so it's re-checked (with the
-                # answer, once given) on the next run instead of being skipped forever.
+                # Keep the body: without it the message only exists on the mail
+                # server, and once last_sync moves past its date nothing would
+                # ever look at it again — the answer would arrive with no
+                # transaction left to apply it to.
+                _save_raw(dest, filename, html, msg)
                 queue_question(source.name, label, exc.question, exc.options)
+                continue
+            except Exception as exc:
+                # A failure on one message (LLM outage, malformed output) must
+                # not cost us the message or abort the rest of the scan.
+                _save_raw(dest, filename, html, msg)
+                logger.error(
+                    "   ! could not parse uid {} ({}: {}) — raw body kept, will retry next run",
+                    uid, type(exc).__name__, exc,
+                )
                 continue
             clear_answered_for(label)
 
             if entry:
-                dest.mkdir(parents=True, exist_ok=True)
-                html_path = dest / filename
-                html_path.write_bytes(_inject_email_headers(html, msg))
-                sidecar = html_path.with_suffix(".bean")
-                sidecar.write_text(entry + "\n")
+                html_path = _save_raw(dest, filename, html, msg)
+                html_path.with_suffix(".bean").write_text(entry + "\n")
                 logger.success("   ✓ receipt saved: {}", filename)
                 receipts += 1
             else:
                 logger.info("   ✗ not a receipt")
-                non_receipt_uids.add(uid)
+                # Persisted per message, not once at the end: an interrupted run
+                # would otherwise re-send every email it already classified back
+                # to the LLM on the next attempt.
+                _mark_non_receipt(state, source_state, non_receipt_uids, uid, date_hint)
     finally:
         imap.logout()
 
-    source_state["last_sync"] = datetime.date.today().isoformat()
-    source_state["non_receipt_uids"] = sorted(non_receipt_uids)
+    _advance_last_sync(source_state)
     save_state(state)
     logger.info("{} receipt(s) found in inbox", receipts)
     return receipts

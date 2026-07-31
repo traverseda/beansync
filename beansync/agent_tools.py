@@ -20,7 +20,7 @@ from pathlib import Path
 
 import litellm
 
-from beansync.config import LEDGER, MODEL, load_accounts
+from beansync.config import LEDGER, MODEL, OPENROUTER_PROVIDER, load_accounts
 from beansync.llm import (
     Posting,
     Transaction,
@@ -447,12 +447,15 @@ def build_handlers(pending_actions: list[dict]) -> dict[str, Callable]:
 
     def _run_ingest(source_names: list[str] | None = None, since: str | None = None) -> str:
         import subprocess
-        cmd = ["bean-sync", "ingest"]
+        # --unattended: there is no terminal behind this call, so a question the
+        # AI can't resolve has to go to the Questions page rather than block
+        # until the timeout below kills the run mid-ingest.
+        cmd = ["bean-sync", "ingest", "--unattended"]
         if source_names:
             cmd.extend(source_names)
         if since:
             cmd.extend(["--since", since])
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
         pending_actions.append({"type": "refresh"})
         return (result.stdout + result.stderr).strip() or f"Done (exit {result.returncode})."
 
@@ -570,7 +573,7 @@ async def llm_loop_stream(
             tools=TOOL_SPECS,
             stream=True,
             request_timeout=120,
-            extra_body={"provider": {"data_collection": "deny", "sort": "price"}},
+            extra_body={"provider": OPENROUTER_PROVIDER},
         )
 
         full_content = ""

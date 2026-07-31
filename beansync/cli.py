@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 from pathlib import Path
 
 import typer
@@ -146,25 +147,48 @@ def _filter(sources: list[AnySource], names: list[str] | None) -> list[AnySource
     return selected
 
 
+def _parse_when(value: str) -> dt.date:
+    """Parse a date or datetime argument into a date.
+
+    A time may be given (2026-06-01T14:30) but is rounded down to the day: every
+    fetch backend this feeds — IMAP SINCE, the CUA CSV export — is day-granular.
+    """
+    try:
+        return dt.datetime.fromisoformat(value).date()
+    except ValueError:
+        logger.error("Invalid date '{}' — use YYYY-MM-DD or YYYY-MM-DDTHH:MM", value)
+        raise typer.Exit(1)
+
+
 @app.command()
 def ingest(
     names: list[str] | None = typer.Argument(default=None, help="Source names to ingest (default: all, in order)"),
     headed: bool = typer.Option(False, "--headed/--headless", help="Show browser window (CUA only)"),
     since: str | None = typer.Option(None, "--since", help="Fetch data from this date onwards, e.g. 2026-06-18 (overrides saved state)"),
+    unattended: bool = typer.Option(
+        False, "--unattended",
+        help="Never prompt: questions the AI can't resolve are queued on the Questions page instead of blocking on stdin",
+    ),
 ) -> None:
     """Fetch new data and parse it for each source."""
     from beansync.scheduler import ingest_lock
     try:
         with ingest_lock():
-            _run_ingest(names, headed, since)
+            _run_ingest(names, headed, since, unattended)
     except RuntimeError as e:
         logger.error(str(e))
         raise typer.Exit(1)
 
 
-def _run_ingest(names: list[str] | None, headed: bool, since: str | None) -> None:
-    import datetime as dt
+def _run_ingest(names: list[str] | None, headed: bool, since: str | None, unattended: bool = False) -> None:
     from beansync import llm, sync_email, sync_cua
+
+    if unattended:
+        # ask_user() raises QuestionDeferred instead of prompting, and the parse
+        # loops queue it for the Questions page. Set for the whole run so no
+        # amount of waiting on an answer can wedge the ingest (and, with it,
+        # hold the ingest lock).
+        llm.UNATTENDED.set(True)
 
     since_date: dt.date | None = None
     if since:
@@ -209,6 +233,11 @@ def _run_ingest(names: list[str] | None, headed: bool, since: str | None) -> Non
                 enrichment_note = llm.ENRICHMENT_NOTE if source.enrichment else ""
                 prompt = llm.SYSTEM_PROMPT_TEMPLATE.format(hint=source.hint, accounts=accounts, null_instruction=null_instr, enrichment_note=enrichment_note)
                 sync_email.ingest_receipt(source, prompt, all_source_dirs, since=since_date, excluded_senders=excluded_senders)
+                # ingest_receipt keeps the body of anything it couldn't classify
+                # (a deferred question, a parse failure) as a sidecar-less file.
+                # This pass retries those — picking up any answers given on the
+                # Questions page since — so nothing sits unparsed on disk.
+                llm.parse_unprocessed(source, prompt, all_source_dirs, nullable=source.nullable)
             i += 1
 
         else:
@@ -254,6 +283,92 @@ def parse(
         else:
             prompt = llm.SYSTEM_PROMPT_TEMPLATE.format(hint=source.hint, accounts=accounts, null_instruction=null_instr, enrichment_note=enrichment_note)
             llm.parse_unprocessed(source, prompt, all_source_dirs)
+
+
+_RAW_SUFFIXES = (".html", ".txt", ".jpg", ".jpeg", ".png", ".webp")
+
+
+def _sidecars_since(sources: list[AnySource], since: dt.date) -> list[Path]:
+    """Generated .bean sidecars for raw files dated on or after `since`.
+
+    Only counts a .bean file whose raw source file still sits beside it, so
+    hand-written ledger files that happen to live in a source dir are never
+    considered — deleting one of those would destroy data with no way to
+    regenerate it.
+    """
+    found: list[Path] = []
+    for source in sources:
+        if not source.source_dir.exists():
+            continue
+        for sidecar in sorted(source.source_dir.rglob("*.bean")):
+            if not any(sidecar.with_suffix(suffix).exists() for suffix in _RAW_SUFFIXES):
+                continue
+            try:
+                file_date = dt.date.fromisoformat(sidecar.stem[:10])
+            except ValueError:
+                continue
+            if file_date >= since:
+                found.append(sidecar)
+    return found
+
+
+@app.command("reimport-from")
+def reimport_from(
+    when: str = typer.Argument(help="Re-import everything from this point, e.g. 2026-06-01 or 2026-06-01T14:30"),
+    names: list[str] | None = typer.Argument(default=None, help="Source names to re-import (default: all)"),
+    reparse: bool = typer.Option(
+        False, "--reparse",
+        help="Also delete .bean sidecars dated on/after this point so every raw file is sent to the LLM again",
+    ),
+    headed: bool = typer.Option(False, "--headed/--headless", help="Show browser window (CUA only)"),
+    unattended: bool = typer.Option(False, "--unattended", help="Queue AI questions instead of prompting"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt for --reparse"),
+) -> None:
+    """Rewind a source's sync state and ingest again from a given date.
+
+    Plain `ingest --since` still skips anything already downloaded or already
+    judged "not a receipt". This rewinds that bookkeeping first, so messages
+    previously skipped are genuinely reconsidered — the command to reach for
+    when a run was interrupted and transactions went missing.
+    """
+    from beansync import sync_email
+    from beansync.scheduler import ingest_lock
+
+    since_date = _parse_when(when)
+    all_sources = load_sources()
+    selected = _filter(all_sources, names)
+    if not selected:
+        logger.error("No matching sources.")
+        raise typer.Exit(1)
+
+    if reparse:
+        doomed = _sidecars_since(selected, since_date)
+        if not doomed:
+            logger.info("No existing sidecars dated on/after {} to re-parse.", since_date)
+        else:
+            logger.warning("{} parsed transaction(s) dated on/after {} will be deleted and re-parsed:", len(doomed), since_date)
+            for sidecar in doomed[:20]:
+                logger.warning("   {}", sidecar)
+            if len(doomed) > 20:
+                logger.warning("   ... and {} more", len(doomed) - 20)
+            if not yes:
+                typer.confirm("Delete these and re-parse from scratch?", abort=True)
+            for sidecar in doomed:
+                sidecar.unlink()
+
+    for source in selected:
+        # Only the IMAP-backed plugins keep sync bookkeeping; the others are
+        # re-fetched purely by passing the date through to their backend.
+        if source.plugin in ("email", "email-receipt"):
+            sync_email.reset_state(source.name, since_date)
+    logger.info("Re-importing {} source(s) from {}", len(selected), since_date)
+
+    try:
+        with ingest_lock():
+            _run_ingest([s.name for s in selected], headed, since_date.isoformat(), unattended)
+    except RuntimeError as e:
+        logger.error(str(e))
+        raise typer.Exit(1)
 
 
 @app.command()

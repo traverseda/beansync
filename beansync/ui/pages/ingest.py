@@ -79,10 +79,31 @@ async def _do_push() -> None:
     ui.notify(result.stdout.strip() or result.stderr.strip() or "Pushed.", type="positive")
 
 
+def _notify_pending_questions(container: ui.element) -> None:
+    """Point at the Questions page if the run left anything unanswered.
+
+    Runs unattended, so an uncertain transaction is parked as a question rather
+    than parsed — without this the terminal output is the only hint that
+    something is waiting, and it has usually scrolled past by then. Called from
+    the streaming thread, which has no slot of its own, so the page's container
+    has to be entered explicitly.
+    """
+    from beansync import questions as questions_store
+
+    count = len(questions_store.pending())
+    if count:
+        with container:
+            ui.notify(
+                f"{count} question(s) waiting on the Questions page.",
+                type="warning", timeout=0, close_button="Dismiss",
+            )
+
+
 def page() -> None:
     sources = load_sources()
     selected: dict[str, bool] = {s.name: True for s in sources}
-    with ui.column().classes("w-full gap-4"):
+    root = ui.column().classes("w-full gap-4")
+    with root:
         with ui.row().classes("w-full items-center"):
             ui.label("Ingest").classes("text-2xl font-bold flex-1")
             if git_ops.is_git_repo(LEDGER.parent):
@@ -111,6 +132,13 @@ def page() -> None:
                     label="Since date (YYYY-MM-DD, optional)",
                     placeholder="e.g. 2026-06-01",
                 ).classes("w-64")
+                reimport = ui.checkbox("Re-import: also reconsider emails previously skipped")
+                reparse = ui.checkbox("Re-parse: discard transactions from that date and ask the AI again")
+                reparse.bind_visibility_from(reimport, "value")
+                ui.label(
+                    "Re-import needs a since date. Re-parse deletes the .bean files "
+                    "generated on or after it — hand-written ledger files are left alone."
+                ).classes("text-xs text-gray-500")
 
         master_fd: list[int] = []
         current_size: list[int] = [24, 80]  # [rows, cols]
@@ -136,12 +164,25 @@ def page() -> None:
                 ui.notify("Select at least one source.", type="warning")
                 return
 
-            cmd = ["bean-sync", "ingest"] + names
+            since_val = since_input.value.strip()
+            if reimport.value and not since_val:
+                ui.notify("Re-import needs a since date to rewind to.", type="warning")
+                return
+
+            if reimport.value:
+                cmd = ["bean-sync", "reimport-from", since_val] + names + ["--yes"]
+                if reparse.value:
+                    cmd += ["--reparse"]
+            else:
+                cmd = ["bean-sync", "ingest"] + names
+                if since_val:
+                    cmd += ["--since", since_val]
             if headed.value:
                 cmd += ["--headed"]
-            since_val = since_input.value.strip()
-            if since_val:
-                cmd += ["--since", since_val]
+            # Nobody is guaranteed to be watching this terminal — the browser tab
+            # can be closed mid-run — so the AI must never block it waiting on an
+            # answer. Questions go to the Questions page instead.
+            cmd += ["--unattended"]
 
             run_btn.disable()
             term.clear()
@@ -179,6 +220,7 @@ def page() -> None:
                         pass
                     run_btn.enable()
                     run_btn.update()
+                    _notify_pending_questions(root)
 
             threading.Thread(target=_stream, daemon=True).start()
 

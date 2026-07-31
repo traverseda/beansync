@@ -19,7 +19,11 @@ from litellm import completion  # type: ignore[import-not-found]
 from loguru import logger  # type: ignore[import-not-found]
 from pydantic import BaseModel, ValidationError  # type: ignore[import-not-found]
 
-from beansync.config import LEDGER, MAX_RETRIES, MAX_SEARCHES, MAX_TOOL_ROUNDS, MODEL, VISION_MODEL, AnySource
+from beansync import images
+from beansync.config import (
+    LEDGER, MAX_RETRIES, MAX_SEARCHES, MAX_TOOL_ROUNDS, MODEL, OPENROUTER_PROVIDER,
+    VISION_MODEL, AnySource,
+)
 from beansync.notes import delete_note, get_notes_context, match_notes, save_note
 from beansync.questions import QuestionDeferred, answered_context_for, clear_answered_for, queue_question
 
@@ -281,6 +285,10 @@ class Transaction(BaseModel):
     narration: str = ""
     certainty: int = 100
     postings: list[Posting]
+    # Receipt photos only: the four corners of the receipt in the image, used to
+    # write a flattened copy for human review. Ignored (and not asked for) on
+    # text sources. Validated in images.deskew before use.
+    corners: list[list[float]] | None = None
 
 
 NULL_INSTRUCTION = "If the email is a denial, a decline, a verification code, or contains no actual charge, respond with exactly: null\n\nOtherwise respond"
@@ -449,7 +457,7 @@ def parse_text(
             messages=messages,
             tools=tools,
             request_timeout=120,
-            extra_body={"provider": {"data_collection": "deny", "sort": "price"}},
+            extra_body={"provider": OPENROUTER_PROVIDER},
         )
         headers = response._hidden_params.get("additional_headers", {})
         generation_id = headers.get("llm_provider-x-generation-id", "unknown")
@@ -510,8 +518,11 @@ def parse_source(
     return parse_text(text, html_file, system_prompt, enrichment_dirs, nullable=nullable, is_enrichment=is_enrichment, extra_context=extra_context)
 
 
-IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
-IMAGE_MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
+IMAGE_SUFFIXES = images.SUFFIXES
+IMAGE_MIME = {
+    ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
+    ".heic": "image/heic", ".heif": "image/heif",
+}
 
 RECEIPT_SYSTEM_PROMPT_TEMPLATE = """You extract transactions from photos of paper or digital receipts.
 
@@ -527,7 +538,8 @@ Respond with raw JSON only — no markdown fences, no beancount syntax, no prose
   "postings": [
     {{"account": "Expenses:Category", "amount": "12.34", "currency": "CAD"}},
     {{"account": "Assets:Checking:CUA", "amount": "-12.34", "currency": "CAD"}}
-  ]
+  ],
+  "corners": [[0.12, 0.05], [0.88, 0.09], [0.91, 0.94], [0.09, 0.90]]
 }}
 
 Split transaction example (multiple expense postings that sum to the total):
@@ -552,6 +564,11 @@ Rules:
 - amounts must balance to zero
 - SPLIT TRANSACTIONS: if the receipt shows items from clearly distinct categories (e.g. groceries and household supplies at a superstore), use multiple expense postings; call ask_user to clarify the split if line-item details are unclear
 
+Corners (used to save a flattened copy of the photo for the archive — it does not affect your reading of the receipt):
+- "corners" is the four corners of the receipt itself within the photo, excluding table, hands, and background
+- Give them as [x, y] fractions of the image size, from 0.0 to 1.0 — NOT pixels — ordered top-left, top-right, bottom-right, bottom-left as the receipt is oriented in the photo
+- If the receipt is already flat and fills the frame, or you cannot identify its corners confidently, omit "corners" entirely rather than guessing
+
 Notes (persistent memory):
 - Check "Relevant notes" for previously saved merchant facts before classifying.
 - Use save_note to record genuinely new merchants.
@@ -573,6 +590,15 @@ def parse_image(
 
     Raises QuestionDeferred if ask_user is called while UNATTENDED is set.
     """
+    # EXIF-rotate, downscale and re-encode before doing anything else. A raw
+    # phone photo is ~40x the payload of the 1600px version the provider will
+    # downscale it to anyway. Rewrites the file in place; the .bean sidecar name
+    # is unaffected, so callers holding the old path stay correct.
+    try:
+        image_file = images.normalize(image_file)
+    except Exception as exc:
+        logger.warning("could not normalize {} ({}: {}) — sending as-is", image_file.name, type(exc).__name__, exc)
+
     mime = IMAGE_MIME.get(image_file.suffix.lower(), "image/jpeg")
     image_data = base64.b64encode(image_file.read_bytes()).decode()
     date_hint = image_file.stem[:10]
@@ -604,7 +630,7 @@ def parse_image(
             messages=messages,
             tools=tools,
             request_timeout=120,
-            extra_body={"provider": {"data_collection": "deny", "sort": "price"}},
+            extra_body={"provider": OPENROUTER_PROVIDER},
         )
         message = response.choices[0].message
 
@@ -637,6 +663,8 @@ def parse_image(
                 last_error = ValueError("LLM returned null")
                 continue
             tx = Transaction.model_validate(data)
+            if tx.corners:
+                images.deskew(image_file, tx.corners)
             return transaction_to_beancount(tx, image_file)
         except (ValueError, ValidationError) as exc:
             last_error = exc
@@ -658,6 +686,9 @@ def parse_unprocessed_images(source: AnySource, system_prompt: str, nullable: bo
     raw_files = sorted(
         f for f in source.source_dir.rglob("*")
         if f.suffix.lower() in IMAGE_SUFFIXES and f.is_file()
+        # Flattened copies are derived artifacts. Left in, each would get its own
+        # .bean sidecar and be parsed as a second, duplicate transaction.
+        and not images.is_flat_copy(f)
     )
     new_count = 0
     for raw_file in raw_files:
@@ -673,6 +704,9 @@ def parse_unprocessed_images(source: AnySource, system_prompt: str, nullable: bo
             )
         except QuestionDeferred as exc:
             queue_question(source.name, raw_file, exc.question, exc.options)
+            continue
+        except Exception as exc:
+            logger.error("   ! {} ({}: {}) — no sidecar written, will retry next run", raw_file, type(exc).__name__, exc)
             continue
         clear_answered_for(raw_file)
         sidecar.write_text(entry + "\n" if entry else "")
@@ -714,6 +748,12 @@ def parse_unprocessed(source: AnySource, system_prompt: str, all_source_dirs: li
             )
         except QuestionDeferred as exc:
             queue_question(source.name, raw_file, exc.question, exc.options)
+            continue
+        except Exception as exc:
+            # The raw file stays on disk with no sidecar, which is exactly the
+            # state that makes the next run pick it up again — so one broken
+            # file costs a retry, not the remaining files in the source.
+            logger.error("   ! {} ({}: {}) — no sidecar written, will retry next run", raw_file, type(exc).__name__, exc)
             continue
         clear_answered_for(raw_file)
         sidecar.write_text(entry + "\n" if entry else "")

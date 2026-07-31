@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import fcntl
 import os
 import threading
 from collections.abc import Generator
@@ -15,39 +16,36 @@ from loguru import logger  # type: ignore[import-not-found]
 # (spawns `bean-sync ingest` as a subprocess via PTY), and a user running
 # `bean-sync ingest` by hand in a terminal. A threading.Lock only protects
 # same-process callers, so coordination has to go through a file instead.
+#
+# The lock is an advisory fcntl.flock on that file, NOT the file's existence:
+# the kernel drops a flock as soon as the holding process dies, however it
+# dies (crash, SIGKILL, container stop), so a lock can never go stale. The
+# earlier pid-liveness check could not manage that — pids restart from 1 in a
+# container, so after a restart an unrelated process would frequently occupy
+# the recorded pid and the lock would look held forever. The file's *contents*
+# are only ever a human-readable hint for the error message.
 _LOCK_FILE = Path("sources/state/ingest.lock")
-
-
-def _pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True  # exists, just owned by someone else
-    return True
 
 
 @contextmanager
 def ingest_lock() -> Generator[None]:
-    """Raises RuntimeError if another ingest (any process) is already running."""
-    if _LOCK_FILE.exists():
-        try:
-            pid_str, _, started = _LOCK_FILE.read_text().partition(" ")
-            pid = int(pid_str)
-        except (ValueError, OSError):
-            pid = -1
-            started = "unknown time"
-        if pid > 0 and _pid_alive(pid):
-            raise RuntimeError(f"Another ingest is already running (pid {pid}, started {started}).")
-        # Stale lock from a crashed/killed process — safe to reclaim.
-
+    """Raises RuntimeError if another live ingest (any process) is already running."""
     _LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
-    _LOCK_FILE.write_text(f"{os.getpid()} {dt.datetime.now().isoformat()}")
+    fd = os.open(_LOCK_FILE, os.O_RDWR | os.O_CREAT, 0o644)
     try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            holder = os.pread(fd, 256, 0).decode(errors="replace").strip() or "unknown process"
+            raise RuntimeError(f"Another ingest is already running ({holder}).")
+        os.ftruncate(fd, 0)
+        os.pwrite(fd, f"pid {os.getpid()}, started {dt.datetime.now().isoformat(timespec='seconds')}".encode(), 0)
         yield
     finally:
-        _LOCK_FILE.unlink(missing_ok=True)
+        # Closing the fd releases the flock. The file itself is deliberately
+        # left behind: unlinking it would race with another process that has
+        # already opened it and is waiting on the lock.
+        os.close(fd)
 
 
 _last_check: dt.datetime | None = None
@@ -86,17 +84,13 @@ def _run_ingest_once() -> None:
     import typer
 
     from beansync.cli import ingest as cli_ingest
-    from beansync.llm import UNATTENDED
 
-    # No terminal is watching this thread, so ask_user() must not block on
-    # stdin — it raises QuestionDeferred instead, which the parse loops turn
-    # into a queued entry on the Questions page. Scoped to this thread's
-    # contextvar copy only; other ingest triggers (CLI, the Ingest page's
-    # PTY-backed "Run Ingest" button) are unaffected and keep blocking.
-    token = UNATTENDED.set(True)
     try:
         logger.info("Scheduled ingest starting")
-        cli_ingest(names=None, headed=False, since=None)
+        # unattended=True: no terminal is watching this thread, so ask_user()
+        # must not block on stdin — it raises QuestionDeferred instead, which
+        # the parse loops turn into a queued entry on the Questions page.
+        cli_ingest(names=None, headed=False, since=None, unattended=True)
         logger.success("Scheduled ingest completed")
     except (SystemExit, typer.Exit):
         pass  # e.g. lock already held — cli.ingest() already logged why.
@@ -108,8 +102,6 @@ def _run_ingest_once() -> None:
         # otherwise be silently dropped — this runs unattended with no
         # terminal watching it, so the log has to be self-contained.
         logger.error("Scheduled ingest failed: {}: {}", type(exc).__name__, exc)
-    finally:
-        UNATTENDED.reset(token)
 
 
 def start() -> None:

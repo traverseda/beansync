@@ -145,6 +145,7 @@ bean-sync ingest --headed cua
 bean-sync init [DIRECTORY]   scaffold a new ledger directory
 bean-sync ingest [NAMES...]  fetch new data and parse it for all (or named) sources
 bean-sync parse [NAMES...]   re-parse existing raw files without fetching
+bean-sync reimport-from WHEN [NAMES...]  rewind sync state and ingest again from a date
 bean-sync serve              launch the web UI
 bean-sync secrets list       list stored secret names
 bean-sync secrets set NAME   store a secret in the system keyring
@@ -157,7 +158,66 @@ bean-sync secrets delete NAME remove a secret
 bean-sync ingest --since 2026-06-01   # fetch data from this date onwards
 bean-sync ingest --headed             # show the browser window (cua/stagehand only)
 bean-sync ingest mycard inbox         # fetch only named sources
+bean-sync ingest --unattended         # queue AI questions instead of prompting
 ```
+
+Only one ingest runs at a time, across the CLI, the web UI and the scheduler.
+The lock is held by the running process itself, so it is released the moment
+that process exits — a crash, a `kill`, or a container restart cannot leave a
+lock behind.
+
+### re-importing
+
+`ingest --since` still skips anything already downloaded or already judged "not
+a receipt". `reimport-from` rewinds that bookkeeping first, so previously
+skipped messages are genuinely reconsidered:
+
+```bash
+bean-sync reimport-from 2026-06-01              # re-check everything since that date
+bean-sync reimport-from 2026-06-01 inbox        # only the named source
+bean-sync reimport-from 2026-06-01 --reparse    # also re-run the LLM over existing raw files
+```
+
+`--reparse` deletes the `.bean` files generated on or after that date and asks
+the LLM again, so any hand-edits to them are lost — it prompts before deleting,
+and only ever touches sidecars whose raw source file is still present.
+
+### unanswered questions
+
+When the LLM isn't confident it calls `ask_user`. Runs started from the web UI
+or the scheduler never block on this: the question is parked on the Questions
+page, the raw source file is kept on disk without a `.bean` sidecar, and the run
+continues. Answering the question parses the transaction immediately, and any
+still-unparsed file is retried by the next `ingest` or `parse` run — an
+interrupted run can delay a transaction, but never lose one.
+
+## Models and data retention
+
+| Role | Default | Why |
+|---|---|---|
+| `MODEL` (text) | `deepseek/deepseek-v4-flash` | Parses emails and scraped statements |
+| `VISION_MODEL` (images) | `qwen/qwen3-vl-30b-a3b-instruct` | Apache-2.0, ~9s/receipt, reads totals and dates correctly |
+
+Both are open-weight. On two real receipts, `qwen3-vl-30b-a3b` got payee, date and total right
+on 12/12 runs — outscoring `gemini-2.5-flash` and `claude-sonnet-4.5`, which each misread a date
+(taking a rental contract's *due* date as the transaction date) or a total.
+
+Every request sets OpenRouter provider routing from `OPENROUTER_PROVIDER` in
+[`beansync/config.py`](beansync/config.py):
+
+```python
+{"zdr": True, "data_collection": "deny", "sort": "price"}
+```
+
+`zdr` restricts routing to **zero-data-retention** endpoints; `data_collection: "deny"` excludes
+providers that may train on prompts. These are separate guarantees — a provider can honour the
+second while still keeping your prompts in logs for days — so a ledger's worth of card numbers,
+addresses and purchase history wants both. An unrecognised key here is a hard 400 from
+OpenRouter, so a typo fails loudly rather than silently dropping the constraint.
+
+If you swap in another model, check it has a ZDR endpoint that supports tool calls — bean-sync
+passes tools on every request, and a model without a tool-capable endpoint fails with
+`No endpoints found that support tool use`.
 
 ## LLM notes
 
@@ -169,7 +229,37 @@ The LLM accumulates merchant notes in `.llm_notes.json`. Keys are regex patterns
 bean-sync serve
 ```
 
-Opens a web interface at `http://127.0.0.1:8765` with a dashboard (Sankey money-flow chart, transaction table), an ingest runner with live terminal output, a config editor, and a merchant notes editor.
+Opens a web interface at `http://127.0.0.1:8765` with a dashboard (Sankey money-flow chart, transaction table), an ingest runner with live terminal output, a receipt uploader, a config editor, and a merchant notes editor.
+
+### Receipts page
+
+`image` sources are filled by hand — the **Receipts** page is that hand, from the browser. Drop
+photos (or shoot one straight from a phone camera) and each is filed into the chosen `image`
+source, parsed immediately, and listed with its ledger entry, so you can re-parse or delete
+without touching the filesystem.
+
+Every uploaded photo is preprocessed before it reaches the LLM:
+
+- **EXIF rotation** is baked into the pixels, so a sideways phone photo isn't read sideways
+- **Downscaled** to 1600px on the long edge and re-encoded as JPEG. Vision providers tile
+  images down to roughly that anyway, so this is close to pure savings — a 1.7 MB phone photo
+  becomes ~190 KB, cutting the per-receipt token cost by around 9x
+- **HEIC/HEIF** (iPhone's default) is converted to JPEG
+- The file is named from the photo's **EXIF capture date**, which is what `parse_image` feeds
+  the model as its date hint — a receipt shot Friday and uploaded Sunday still files under Friday
+
+### De-skewing
+
+The same vision call that extracts the transaction is also asked for the receipt's four corners,
+so a flattened copy (`<name>.flat.jpg`) can be saved for human review — it costs no extra API
+call. The original photo is always kept, and the source viewer shows both on tabs.
+
+This is a convenience for reading the archive later, **not** an accuracy measure: the vision
+model reads an angled receipt perfectly well without it. Corner estimates vary a lot by model —
+weaker ones tend to return a canned axis-aligned box rather than detecting the real quad — so
+`beansync/images.py` only warps when the quad shows real skew (≥4°) and doesn't already fill the
+frame (≤85% area), and expands it 6% outward before cropping. A loose crop is harmless; one that
+clips the total is a lost record.
 
 ## MCP servers
 

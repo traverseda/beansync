@@ -128,7 +128,7 @@ async def debug_ingress(request: Request) -> dict:
         "headers": dict(request.headers),
     }
 
-from beansync.ui.pages import dashboard, ingest, notes, questions
+from beansync.ui.pages import dashboard, ingest, notes, questions, receipts
 from beansync.ui.pages import config_editor
 from beansync.ui.pages import chat as chat_module
 
@@ -156,8 +156,10 @@ async def serve_source(path: str) -> FileResponse | PlainTextResponse:
 
 @nicegui_app.get("/api/print-packet", response_model=None)
 async def print_packet(path: str) -> HTMLResponse | PlainTextResponse:
+    from beansync import images
     from beansync.llm import find_enrichment, html_to_text
     from beansync.config import load_sources
+    import base64
     import re
 
     source_path = _check_source_path(path)
@@ -168,8 +170,24 @@ async def print_packet(path: str) -> HTMLResponse | PlainTextResponse:
     enrichment_dirs = [d for d in all_source_dirs if not source_path.is_relative_to(d)]
 
     def read_text(p: Path) -> str:
+        if p.suffix.lower() in images.SUFFIXES:
+            return ""  # binary; rendered as an <img>, not decoded as text
         raw = p.read_text(encoding="utf-8", errors="replace")
         return html_to_text(raw) if p.suffix == ".html" else raw
+
+    def embed_image(p: Path) -> str:
+        """Inline the photo as a data URI so the packet prints as one self-contained page.
+
+        Prefers the flattened copy — the packet is the thing someone reads back
+        during an audit, and a de-skewed receipt is far more legible on paper.
+        """
+        flat = images.flat_path(p)
+        chosen = flat if flat.exists() else p
+        data = base64.b64encode(chosen.read_bytes()).decode()
+        return (
+            f'<img src="data:image/jpeg;base64,{data}" '
+            f'style="max-width:100%; max-height:22cm; object-fit:contain;">'
+        )
 
     def bean_source_path(bean_text: str) -> Path | None:
         m = re.search(r'source:\s*"([^"]+)"', bean_text)
@@ -233,16 +251,15 @@ async def print_packet(path: str) -> HTMLResponse | PlainTextResponse:
     if bean_path.exists():
         sections.append(section(bean_path.name, pre(bean_path.read_text())))
 
-    if source_path.suffix == ".html":
-        sections.append(section(source_path.name, embed_html(source_path)))
-    else:
-        sections.append(section(source_path.name, pre(primary_text)))
+    def body(p: Path, text: str) -> str:
+        if p.suffix.lower() in images.SUFFIXES:
+            return embed_image(p)
+        return embed_html(p) if p.suffix == ".html" else pre(text)
+
+    sections.append(section(source_path.name, body(source_path, primary_text)))
 
     for p in linked_paths:
-        if p.suffix == ".html":
-            sections.append(section(p.name, embed_html(p)))
-        else:
-            sections.append(section(p.name, pre(read_text(p))))
+        sections.append(section(p.name, body(p, read_text(p))))
 
     # No page break on last section
     if sections:
@@ -278,6 +295,7 @@ def _nav_header(request: Request) -> None:
         for _label, _path in [
             ("Dashboard", "/"),
             ("Ingest", "/ingest"),
+            ("Receipts", "/receipts"),
             ("Questions", "/questions"),
             ("Notes", "/notes"),
             ("Config", "/config"),
@@ -322,6 +340,13 @@ def ingest_page(request: Request) -> None:
     _nav_header(request)
     with ui.column().classes("p-6 w-full"):
         ingest.page()
+
+
+@ui.page("/receipts")
+def receipts_page(request: Request) -> None:
+    _nav_header(request)
+    with ui.column().classes("p-6 w-full"):
+        receipts.page()
 
 
 @ui.page("/questions")

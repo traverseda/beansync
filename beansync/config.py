@@ -20,7 +20,26 @@ class SecretRef:
 
 
 MODEL = "openrouter/deepseek/deepseek-v4-flash"
-VISION_MODEL = "openrouter/qwen/qwen2.5-vl-72b-instruct"
+# qwen2.5-vl-72b was here but never worked: it advertises no tool-capable endpoint on
+# OpenRouter, so every image parse 404'd with "No endpoints found that support tool use".
+# qwen3-vl-30b-a3b is Apache-2.0, has ZDR endpoints, and read the total, date and payee
+# correctly on 12/12 runs across two real receipts in ~9s — beating both gemini-2.5-flash
+# and claude-sonnet-4.5, which each misread a date or a total on the same images.
+VISION_MODEL = "openrouter/qwen/qwen3-vl-30b-a3b-instruct"
+
+# OpenRouter provider routing, sent as extra_body on every completion.
+#
+# "data_collection": "deny" and "zdr" are NOT the same guarantee, and only the first
+# was previously set. data_collection:deny excludes providers that may collect or train
+# on prompts; a provider can honour that and still retain them in logs for days. zdr
+# restricts routing to zero-data-retention endpoints, which is what a ledger full of
+# card numbers, addresses and purchase history actually wants. Every model bean-sync
+# ships with has ZDR endpoints that support tool calls, so this costs nothing.
+#
+# Setting an unrecognised key here is a hard 400 from OpenRouter, so a typo fails loudly
+# rather than silently dropping the privacy constraint.
+OPENROUTER_PROVIDER = {"zdr": True, "data_collection": "deny", "sort": "price"}
+
 LEDGER = Path("main.bean")
 MAX_RETRIES = 3
 MAX_TOOL_ROUNDS = 3

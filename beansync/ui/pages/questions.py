@@ -10,10 +10,10 @@ from beansync import questions as questions_store
 def _reparse_file(q: dict) -> str:
     """Attempt an immediate targeted re-parse of the file a deferred question was about.
 
-    Only possible for sources that fetch raw files to disk before parsing
-    (image/html sources) — email-receipt sources haven't downloaded the
-    message yet at defer time, so those just wait for the next ingest run
-    to pick the saved answer up automatically.
+    Every source keeps its raw file on disk before deferring, including
+    email-receipt ones, so this normally resolves the transaction on the spot.
+    A missing file means the raw data predates that guarantee; answering still
+    helps, because the answer is replayed into the next ingest run.
     """
     from beansync import llm
     from beansync.config import load_accounts, load_sources
@@ -64,9 +64,10 @@ def page() -> None:
     with ui.column().classes("w-full gap-4"):
         ui.label("Questions").classes("text-2xl font-bold")
         ui.label(
-            "Questions the AI couldn't answer confidently during a scheduled/background ingest "
-            "run, where ask_user has no terminal to block on. Only authoritative (non-enrichment) "
-            "sources can raise these."
+            "Questions the AI couldn't answer confidently during an ingest run. Runs started "
+            "from the web UI or the scheduler never block waiting on an answer — they park the "
+            "question here and carry on, and the transaction is parsed as soon as you answer. "
+            "Only authoritative (non-enrichment) sources can raise these."
         ).classes("text-sm text-gray-500")
 
         container = ui.column().classes("w-full gap-3")

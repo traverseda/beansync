@@ -6,23 +6,56 @@ from urllib.parse import quote
 
 from nicegui import ui
 
+from beansync import images
 from beansync.config import load_sources
 from beansync.llm import find_enrichment, html_to_text
 from beansync.ui.urls import app_url
 
 
 def _display_source(path: Path) -> None:
-    raw = path.read_text(encoding="utf-8", errors="replace")
+    if path.suffix.lower() in images.SUFFIXES:
+        _display_image(path)
+        return
     if path.suffix == ".html":
         url = app_url(f"/api/source?path={quote(str(path))}")
         ui.element("iframe").props(f'src="{url}" sandbox="allow-same-origin"').style(
             "width:100%;height:480px;border:none;background:white;"
         )
     else:
-        ui.code(raw, language="text").classes("w-full text-xs")
+        ui.code(path.read_text(encoding="utf-8", errors="replace"), language="text").classes("w-full text-xs")
+
+
+def _display_image(path: Path) -> None:
+    """Show a receipt photo, defaulting to the flattened copy where one exists.
+
+    The flattened version is what you actually want to read; the original is kept
+    one tab away because a bad auto-crop should never hide the real evidence.
+    """
+    flat = images.flat_path(path)
+
+    def img(p: Path) -> None:
+        ui.image(app_url(f"/api/source?path={quote(str(p))}")).classes(
+            "w-full max-w-2xl"
+        ).style("background:#111;")
+
+    if not flat.exists():
+        img(path)
+        return
+    with ui.tabs().props("dense").classes("w-full") as tabs:
+        flat_tab = ui.tab("Flattened")
+        orig_tab = ui.tab("Original photo")
+    with ui.tab_panels(tabs, value=flat_tab).classes("w-full"):
+        with ui.tab_panel(flat_tab):
+            img(flat)
+        with ui.tab_panel(orig_tab):
+            img(path)
 
 
 def _read_source(path: Path) -> str:
+    if path.suffix.lower() in images.SUFFIXES:
+        # Binary. There's no text to match enrichment against, and decoding it
+        # would just feed megabytes of mojibake into find_enrichment.
+        return ""
     raw = path.read_text(encoding="utf-8", errors="replace")
     return html_to_text(raw) if path.suffix == ".html" else raw
 
