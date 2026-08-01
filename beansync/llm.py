@@ -21,7 +21,7 @@ from pydantic import BaseModel, ValidationError  # type: ignore[import-not-found
 
 from beansync import images
 from beansync.config import (
-    LEDGER, MAX_RETRIES, MAX_SEARCHES, MAX_TOOL_ROUNDS, MODEL, OPENROUTER_PROVIDER,
+    CORNER_MODEL, LEDGER, MAX_RETRIES, MAX_SEARCHES, MAX_TOOL_ROUNDS, MODEL, OPENROUTER_PROVIDER,
     VISION_MODEL, AnySource,
 )
 from beansync.notes import delete_note, get_notes_context, match_notes, save_note
@@ -285,9 +285,11 @@ class Transaction(BaseModel):
     narration: str = ""
     certainty: int = 100
     postings: list[Posting]
-    # Receipt photos only: the four corners of the receipt in the image, used to
-    # write a flattened copy for human review. Ignored (and not asked for) on
-    # text sources. Validated in images.deskew before use.
+
+
+class Corners(BaseModel):
+    # Four [x, y] points in 0-1 image space, top-left/top-right/bottom-right/bottom-left,
+    # as returned by CORNER_MODEL. Validated in images.deskew before use.
     corners: list[list[float]] | None = None
 
 
@@ -538,8 +540,7 @@ Respond with raw JSON only — no markdown fences, no beancount syntax, no prose
   "postings": [
     {{"account": "Expenses:Category", "amount": "12.34", "currency": "CAD"}},
     {{"account": "Assets:Checking:CUA", "amount": "-12.34", "currency": "CAD"}}
-  ],
-  "corners": [[0.12, 0.05], [0.88, 0.09], [0.91, 0.94], [0.09, 0.90]]
+  ]
 }}
 
 Split transaction example (multiple expense postings that sum to the total):
@@ -564,11 +565,6 @@ Rules:
 - amounts must balance to zero
 - SPLIT TRANSACTIONS: if the receipt shows items from clearly distinct categories (e.g. groceries and household supplies at a superstore), use multiple expense postings; call ask_user to clarify the split if line-item details are unclear
 
-Corners (used to save a flattened copy of the photo for the archive — it does not affect your reading of the receipt):
-- "corners" is the four corners of the receipt itself within the photo, excluding table, hands, and background
-- Give them as [x, y] fractions of the image size, from 0.0 to 1.0 — NOT pixels — ordered top-left, top-right, bottom-right, bottom-left as the receipt is oriented in the photo
-- If the receipt is already flat and fills the frame, or you cannot identify its corners confidently, omit "corners" entirely rather than guessing
-
 Notes (persistent memory):
 - Check "Relevant notes" for previously saved merchant facts before classifying.
 - Use save_note to record genuinely new merchants.
@@ -577,6 +573,55 @@ Notes (persistent memory):
 
 Accounts:
 {accounts}"""
+
+CORNER_PROMPT = """You locate a receipt's four corners within a photo, for an archival crop — not for reading its contents.
+
+Respond with raw JSON only — no markdown fences, no prose — in this exact shape:
+{"corners": [[0.12, 0.05], [0.88, 0.09], [0.91, 0.94], [0.09, 0.90]]}
+
+- "corners" is the four corners of the receipt itself within the photo, excluding table, hands, and background
+- Give them as [x, y] fractions of the image size, from 0.0 to 1.0 — NOT pixels — ordered top-left, top-right, bottom-right, bottom-left as the receipt is oriented in the photo
+- The receipt is almost never perfectly flat or evenly lit — glare, texture or a cluttered background behind it is normal and not a reason to withhold an answer. Give your best estimate of where its edges are; a rough box is far more useful than no answer
+- Only respond with {"corners": null} if the receipt genuinely fills the entire frame edge-to-edge, or literally no receipt is visible in the photo"""
+
+
+def detect_corners(image_file: Path) -> list[list[float]] | None:
+    """Ask CORNER_MODEL for a receipt's four corners, for the cosmetic flattened copy
+    images.deskew writes.
+
+    A separate call from parse_image's extraction on purpose: VISION_MODEL is tuned for
+    reading totals/dates/payees, not quad detection, and in practice answers corner
+    questions with a canned axis-aligned box that images._valid_quad's skew heuristic
+    then (correctly) throws away. Never raises: a failed cosmetic step must not fail an
+    ingest run.
+    """
+    try:
+        mime = IMAGE_MIME.get(image_file.suffix.lower(), "image/jpeg")
+        image_data = base64.b64encode(image_file.read_bytes()).decode()
+        response = completion(
+            model=CORNER_MODEL,
+            messages=[
+                {"role": "system", "content": CORNER_PROMPT},
+                {"role": "user", "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_data}"}},
+                ]},
+            ],
+            request_timeout=60,
+            extra_body={"provider": OPENROUTER_PROVIDER},
+        )
+        raw = (response.choices[0].message.content or "").strip()
+        data = extract_json(raw)
+        if isinstance(data, dict) and isinstance(data.get("corners"), list):
+            # Models occasionally botch "no corners" as [null] instead of a bare null —
+            # same meaning, wrong shape. Treat it as the null it was going for.
+            data["corners"] = [pt for pt in data["corners"] if pt is not None] or None
+        return Corners.model_validate(data if isinstance(data, dict) else {}).corners
+    except (ValueError, ValidationError) as exc:
+        logger.debug("no usable corners for {} ({}: {})", image_file.name, type(exc).__name__, exc)
+        return None
+    except Exception as exc:
+        logger.warning("corner detection failed for {} ({}: {})", image_file.name, type(exc).__name__, exc)
+        return None
 
 
 def parse_image(
@@ -663,8 +708,9 @@ def parse_image(
                 last_error = ValueError("LLM returned null")
                 continue
             tx = Transaction.model_validate(data)
-            if tx.corners:
-                images.deskew(image_file, tx.corners)
+            corners = detect_corners(image_file)
+            if corners:
+                images.deskew(image_file, corners)
             return transaction_to_beancount(tx, image_file)
         except (ValueError, ValidationError) as exc:
             last_error = exc

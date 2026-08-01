@@ -250,16 +250,20 @@ Every uploaded photo is preprocessed before it reaches the LLM:
 
 ### De-skewing
 
-The same vision call that extracts the transaction is also asked for the receipt's four corners,
-so a flattened copy (`<name>.flat.jpg`) can be saved for human review — it costs no extra API
-call. The original photo is always kept, and the source viewer shows both on tabs.
+A second, small vision call locates the receipt's four corners so a flattened copy
+(`<name>.flat.jpg`) can be saved for human review. It's a separate call from the one that
+extracts the transaction on purpose: the extraction model (`VISION_MODEL`) is picked for reading
+totals and dates correctly, not for finding quads, and in practice always answers corner
+questions with a canned axis-aligned box instead of a real one — so corner detection goes to
+`CORNER_MODEL`, a model that actually attempts it. The original photo is always kept, and the
+source viewer shows both on tabs.
 
 This is a convenience for reading the archive later, **not** an accuracy measure: the vision
-model reads an angled receipt perfectly well without it. Corner estimates vary a lot by model —
-weaker ones tend to return a canned axis-aligned box rather than detecting the real quad — so
-`beansync/images.py` only warps when the quad shows real skew (≥4°) and doesn't already fill the
-frame (≤85% area), and expands it 6% outward before cropping. A loose crop is harmless; one that
-clips the total is a lost record.
+model reads an angled receipt perfectly well without it. `beansync/images.py` still rejects a
+quad that already fills the frame (≤85% area, since a warp there can only lose pixels) or is
+otherwise degenerate, but — unlike the old same-call approach — trusts an axis-aligned answer
+from `CORNER_MODEL` as a real crop, not a canned guess, and expands the quad 6% outward before
+cropping. A loose crop is harmless; one that clips the total is a lost record.
 
 ## MCP servers
 

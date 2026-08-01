@@ -27,6 +27,14 @@ MODEL = "openrouter/deepseek/deepseek-v4-flash"
 # and claude-sonnet-4.5, which each misread a date or a total on the same images.
 VISION_MODEL = "openrouter/qwen/qwen3-vl-30b-a3b-instruct"
 
+# Used only to locate a receipt's corners for the cosmetic flattened copy (see
+# images.deskew) — never for reading the receipt itself. VISION_MODEL was picked for
+# field accuracy, not quad detection, and in practice always answers corner questions
+# with a canned axis-aligned box rather than a real quad (images._valid_quad's skew
+# heuristic was tuned against gemini-2.5-flash and claude-sonnet-4.5, which don't do
+# that — see MIN_SKEW_DEGREES), so corner detection gets its own call to one of those.
+CORNER_MODEL = "openrouter/google/gemini-2.5-flash"
+
 # OpenRouter provider routing, sent as extra_body on every completion.
 #
 # "data_collection": "deny" and "zdr" are NOT the same guarantee, and only the first

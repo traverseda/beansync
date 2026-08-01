@@ -87,13 +87,15 @@ def normalize(path: Path, max_edge: int = MAX_EDGE) -> Path:
 # full-frame document. Enforcing the rule here rather than trusting the model.
 MAX_QUAD_AREA = 0.85
 
-# The only thing a warp actually buys is de-rotation — an axis-aligned crop just
-# trims margins the vision model never had trouble reading anyway. Measured across
-# qwen2.5-vl-72b, gemini-2.5-flash and claude-sonnet-4.5, the weaker models tend to
-# answer with a canned axis-aligned box (often a literal 0.05/0.95 inset) rather
-# than detecting the real quad. Warping on one of those is all clipping risk and no
-# benefit, so a quad has to show real skew before it is used.
-MIN_SKEW_DEGREES = 4.0
+# There used to be a MIN_SKEW_DEGREES gate here, rejecting axis-aligned quads outright:
+# corner detection was piggybacked on the same call that extracted the transaction, and
+# a model optimized for reading totals correctly (not finding quads) reliably answered
+# with a canned axis-aligned inset instead of a real quad — trimming to that box was
+# pure clipping risk for zero benefit, so only a quad with visible skew was trusted.
+# Corner detection is now its own call (see llm.CORNER_MODEL) to a model picked because
+# it does the opposite — an axis-aligned answer from it is a real "the receipt sits in
+# this box," worth cropping to even when there's no rotation to correct. _skew_degrees
+# is still computed, for the debug log.
 
 
 def _quad_area(corners: list[list[float]]) -> float:
@@ -119,7 +121,7 @@ def _valid_quad(corners: list[list[float]]) -> bool:
     # A quad covering under 15% of either axis is a misfire, not a receipt.
     if (max(xs) - min(xs)) <= 0.15 or (max(ys) - min(ys)) <= 0.15:
         return False
-    return _quad_area(corners) <= MAX_QUAD_AREA and _skew_degrees(corners) >= MIN_SKEW_DEGREES
+    return _quad_area(corners) <= MAX_QUAD_AREA
 
 
 def _skew_degrees(corners: list[list[float]]) -> float:

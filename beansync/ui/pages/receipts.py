@@ -265,9 +265,9 @@ def page() -> None:
                 label="Drop receipt photos here, or take one with your phone camera",
             ).props('accept="image/*" capture="environment"').classes("w-full")
             ui.label(
-                "Each photo is EXIF-rotated, downscaled, and sent to the vision model, "
-                "which also returns the receipt's corners so a flattened copy is saved "
-                "alongside the original."
+                "Each photo is EXIF-rotated, downscaled, and sent to the vision model. "
+                "A second call locates the receipt's corners so a flattened copy is "
+                "saved alongside the original."
             ).classes("text-xs text-gray-500")
 
         gallery.move(root)
